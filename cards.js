@@ -1,5 +1,6 @@
 // cards.js — SB Wallet cards: make several cards, pick the one you use, flip it, reveal it, freeze it.
 // All cards share your one wallet balance. The card you pick is shown on your receipts.
+// You must make a card before you can add or send money. The blue card is free, other colors cost money.
 
 (function () {
   if (!window.SB || !window.Wallet) return;
@@ -8,16 +9,26 @@
   var Wallet = window.Wallet;
 
   var MAX_CARDS = 5;
+  // Dollars for every color except the free one. Colors are all free until the "paidColors" switch is turned on.
+  var COLOR_PRICE = SB.features.paidColors ? 10 : 0;
+
   var FINISHES = [
-    { id: "ocean", label: "Ocean Blue", premium: false },
-    { id: "forest", label: "Forest Green", premium: false },
-    { id: "bronze", label: "Sunset Bronze", premium: false },
-    { id: "holo", label: "Holographic Blue", premium: true },
-    { id: "silver", label: "Metallic Silver", premium: true },
-    { id: "obsidian", label: "Obsidian Black", premium: true }
+    { id: "ocean", short: "Ocean", label: "Ocean Blue", price: 0 },
+    { id: "forest", short: "Forest", label: "Forest", price: COLOR_PRICE },
+    { id: "bronze", short: "Bronze", label: "Bronze", price: COLOR_PRICE },
+    { id: "rose", short: "Rose", label: "Rose Gold", price: COLOR_PRICE },
+    { id: "ruby", short: "Ruby", label: "Ruby", price: COLOR_PRICE },
+    { id: "midnight", short: "Midnight", label: "Midnight", price: COLOR_PRICE },
+    { id: "gold", short: "Gold", label: "Royal Gold", price: COLOR_PRICE },
+    { id: "silver", short: "Silver", label: "Silver", price: COLOR_PRICE },
+    { id: "obsidian", short: "Obsidian", label: "Obsidian", price: COLOR_PRICE },
+    { id: "holo", short: "Holo", label: "Holographic", price: COLOR_PRICE },
+    { id: "aurora", short: "Aurora", label: "Aurora", price: COLOR_PRICE }
   ];
 
   var cards = [];
+  var cardsReady = false;
+  var onboarded = false;
   var stopCards = null;
   var selFinish = "ocean";
   var current = null;      // the card open in the card sheet
@@ -25,10 +36,11 @@
   var revealed = false;
   var viewing = false;
   var timerId = null;
+  var autoPicking = false;
 
-  function finishLabel(id) {
-    for (var i = 0; i < FINISHES.length; i++) if (FINISHES[i].id === id) return FINISHES[i].label;
-    return "SB Card";
+  function finishById(id) {
+    for (var i = 0; i < FINISHES.length; i++) if (FINISHES[i].id === id) return FINISHES[i];
+    return FINISHES[0];
   }
 
   // The card you use (shown on receipts), or nothing
@@ -57,40 +69,80 @@
   function maskedNumber(card) { return "•••• •••• •••• " + card.last4; }
   function fullNumber(card) { return card.number.replace(/(.{4})/g, "$1 ").trim(); }
 
+  // Make the card lean and glow where your finger is
+  function attachTilt(root) {
+    function move(cx, cy) {
+      var r = root.getBoundingClientRect();
+      var x = Math.min(1, Math.max(0, (cx - r.left) / r.width));
+      var y = Math.min(1, Math.max(0, (cy - r.top) / r.height));
+      root.style.setProperty("--rx", ((0.5 - y) * 18).toFixed(1) + "deg");
+      root.style.setProperty("--ry", ((x - 0.5) * 24).toFixed(1) + "deg");
+      root.style.setProperty("--gx", (x * 100).toFixed(0) + "%");
+      root.style.setProperty("--gy", (y * 100).toFixed(0) + "%");
+      root.classList.add("touching");
+    }
+    function end() {
+      root.classList.remove("touching");
+      root.style.setProperty("--rx", "0deg");
+      root.style.setProperty("--ry", "0deg");
+    }
+    root.addEventListener("touchstart", function (e) { move(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+    root.addEventListener("touchmove", function (e) { move(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+    root.addEventListener("touchend", end, { passive: true });
+    root.addEventListener("touchcancel", end, { passive: true });
+    root.addEventListener("mousemove", function (e) { move(e.clientX, e.clientY); });
+    root.addEventListener("mouseleave", end);
+  }
+
+  // The front shows NO numbers. The numbers live on the back.
   // opts: { mini, badge }
   function cardEl(card, opts) {
     opts = opts || {};
     var root = el("div", "bank-card" + (opts.mini ? " mini" : "") + (card.frozen ? " frozen" : ""));
+    var tilt = el("div", "bc-tilt");
     var inner = el("div", "bc-inner");
 
     var front = el("div", "bc-face bc-front fin-" + card.finish);
+    front.appendChild(el("div", "bc-glare"));
     var top = el("div", "bc-top");
     top.appendChild(el("span", "bc-name", card.name));
     top.appendChild(brandEl(card.brand));
-    var num = el("p", "bc-num", maskedNumber(card));
+    var mid = el("div", "bc-mid");
+    mid.appendChild(el("div", "bc-chip"));
     var bot = el("div", "bc-bot");
     bot.appendChild(el("span", "bc-holder", card.holder || ""));
-    bot.appendChild(el("span", "bc-exp", card.expMonth + "/" + card.expYear));
+    bot.appendChild(opts.badge ? el("span", "bc-badge", "IN USE") : el("span", "bc-sb", "SB"));
     front.appendChild(top);
-    front.appendChild(num);
+    front.appendChild(mid);
     front.appendChild(bot);
     front.appendChild(el("div", "bc-frozen", "FROZEN ❄"));
-    if (opts.badge) front.appendChild(el("span", "bc-badge", "IN USE"));
     inner.appendChild(front);
 
     if (!opts.mini) {
       var back = el("div", "bc-face bc-back");
       back.appendChild(el("div", "bc-strip"));
-      var sig = el("div", "bc-sig");
-      sig.appendChild(document.createElement("i"));
-      sig.appendChild(el("span", "bc-cvv", card.cvv));
-      back.appendChild(sig);
+      var bk = el("div", "bc-bk");
+      var num = el("p", "bc-num", card.number.indexOf("•") !== -1 ? card.number : maskedNumber(card));
+      bk.appendChild(num);
+      var row = el("div", "bc-row");
+      var d1 = el("div", "");
+      d1.appendChild(el("span", "bc-lab", "VALID THRU"));
+      d1.appendChild(el("span", "bc-val", card.expMonth + "/" + card.expYear));
+      var d2 = el("div", "");
+      d2.appendChild(el("span", "bc-lab", "CVV"));
+      d2.appendChild(el("span", "bc-cvv", card.cvv));
+      row.appendChild(d1);
+      row.appendChild(d2);
+      bk.appendChild(row);
+      back.appendChild(bk);
       back.appendChild(el("p", "bc-note", "SB Wallet fake card. Not real money."));
       inner.appendChild(back);
+      root._num = num;
+      attachTilt(root);
     }
 
-    root.appendChild(inner);
-    root._num = num;
+    tilt.appendChild(inner);
+    root.appendChild(tilt);
     return root;
   }
 
@@ -111,14 +163,15 @@
     var add = el("button", "new-card-tile");
     add.type = "button";
     add.appendChild(el("b", "", "+"));
-    add.appendChild(el("span", "", "Issue SB Card"));
-    add.addEventListener("click", openNew);
+    add.appendChild(el("span", "", "New card"));
+    add.addEventListener("click", function () { openNew(false); });
     row.appendChild(add);
 
     $("cardsCount").textContent = cards.length ? cards.length + " of " + MAX_CARDS : "";
+    $("issueBanner").classList.toggle("show", SB.features.requireCard && cardsReady && cards.length === 0);
 
     // The big wallet card wears the colors of the card you use
-    $("walletCard").className = "wallet-card fin-" + (active ? active.finish : "ocean");
+    $("walletCard").className = "wallet-card fin-" + (active ? active.finish : (SB.features.requireCard ? "none" : "ocean"));
 
     if (viewing && current) refreshOpen();
   }
@@ -127,11 +180,12 @@
   function previewCard() {
     var nick = $("cardNick").value.trim();
     var p = SB.state.profile;
+    var f = finishById(selFinish);
     return {
-      name: nick || finishLabel(selFinish),
+      name: nick || f.label,
       finish: selFinish,
       brand: "mastercard",
-      number: "9000000000000000",
+      number: "•••• •••• •••• ••••",
       last4: "••••",
       expMonth: "12",
       expYear: "30",
@@ -145,32 +199,35 @@
     var box = $("newPreview");
     box.innerHTML = "";
     box.appendChild(cardEl(previewCard()));
+    var f = finishById(selFinish);
+    $("priceNote").textContent = f.price > 0 ? SB.money(f.price) + " from your balance" : "Free";
+    $("issueBtn").textContent = f.price > 0 ? "Issue for " + SB.money(f.price) : "Issue Card Now";
   }
 
-  function buildPickers() {
-    var free = $("finFree");
-    var prem = $("finPrem");
-    free.innerHTML = "";
-    prem.innerHTML = "";
+  function buildPicker() {
+    var grid = $("finGrid");
+    grid.innerHTML = "";
     FINISHES.forEach(function (f) {
-      var b = el("button", "fin-dot fin-" + f.id + (f.id === selFinish ? " sel" : ""));
+      var b = el("button", "fin-opt" + (f.id === selFinish ? " sel" : ""));
       b.type = "button";
       b.setAttribute("aria-label", f.label);
-      if (f.premium) b.appendChild(el("span", "star", "★"));
+      b.appendChild(el("span", "fin-dot fin-" + f.id));
+      b.appendChild(el("span", "", f.short));
       b.addEventListener("click", function () {
         selFinish = f.id;
-        buildPickers();
+        buildPicker();
         renderPreview();
       });
-      (f.premium ? prem : free).appendChild(b);
+      grid.appendChild(b);
     });
   }
 
-  function openNew() {
+  function openNew(first) {
     if (cards.length >= MAX_CARDS) { SB.toast("You can have up to " + MAX_CARDS + " cards."); return; }
     selFinish = "ocean";
     $("cardNick").value = "";
-    buildPickers();
+    $("newTitle").textContent = first ? "Make your first card" : "New SB Card";
+    buildPicker();
     renderPreview();
     SB.showView("vCardNew");
   }
@@ -180,14 +237,32 @@
   $("issueBtn").addEventListener("click", function () {
     SB.flow(async function () {
       if (!SB.state.profileLive) { SB.toast("Still loading your account. One moment."); return; }
-      var name = $("cardNick").value.trim() || finishLabel(selFinish);
+      var f = finishById(selFinish);
+      var name = $("cardNick").value.trim() || f.label;
       var holder = SB.fullName(SB.state.profile).toUpperCase();
       var firstCard = cards.length === 0 || !SB.activeCard();
-      var id = await Wallet.createCard(SB.state.uid, name, selFinish, holder);
-      if (firstCard) await Wallet.setActiveCard(SB.state.uid, id);
-      SB.chime();
-      SB.closeSheet();
-      SB.toast("Card issued!");
+      var uid = SB.state.uid;
+
+      if (f.price <= 0) {
+        var id = await Wallet.createCard(uid, name, selFinish, holder, 0);
+        if (firstCard) await Wallet.setActiveCard(uid, id);
+        SB.chime();
+        SB.closeSheet();
+        SB.toast("Card issued!");
+        return;
+      }
+
+      if ((SB.state.profile.balance || 0) < f.price) {
+        SB.toast("You need " + SB.money(f.price) + " for this color.");
+        return;
+      }
+      if (!(await SB.needPin())) return;
+      if (!(await SB.pinGate("Paying " + SB.money(f.price) + " for " + name))) return;
+
+      await SB.runBusy("Making your card…", async function () {
+        var newId = await Wallet.createCard(uid, name, selFinish, holder, f.price);
+        if (firstCard) await Wallet.setActiveCard(uid, newId);
+      }, name + " is ready!", null, ["Checking your balance…", "Making your card…", "Almost there…"]);
     });
   });
 
@@ -195,11 +270,10 @@
   function clearTimer() {
     clearTimeout(timerId);
     timerId = null;
-    var t = $("cvTimer");
-    t.classList.remove("run");
+    $("cvTimer").classList.remove("run");
   }
 
-  // Runs your function after 10 seconds, with a line shrinking across the top
+  // Runs your function after 10 seconds, with a line shrinking across the bottom
   function startTimer(done) {
     clearTimer();
     var t = $("cvTimer");
@@ -220,6 +294,7 @@
     var isActive = !!(active && active.id === current.id);
     $("cvUse").textContent = isActive ? "✓ Using this card" : "Use this card";
     $("cvUse").disabled = isActive;
+    $("cvUse").classList.toggle("used-btn", isActive);
     $("cvFreeze").textContent = current.frozen ? "Unfreeze" : "Freeze";
     $("cvFreeze").classList.toggle("on", !!current.frozen);
     $("cvReveal").classList.toggle("on", revealed);
@@ -234,7 +309,6 @@
     var box = $("cvCard");
     box.innerHTML = "";
     cardRoot = cardEl(card);
-    cardRoot.addEventListener("click", toggleFlip);
     box.appendChild(cardRoot);
     updateButtons();
     SB.showView("vCard");
@@ -250,24 +324,32 @@
     updateButtons();
   }
 
-  function toggleFlip() {
+  function setFlipped(flipped) {
     if (!cardRoot) return;
-    var flipped = cardRoot.classList.toggle("flipped");
-    if (flipped) startTimer(function () { cardRoot.classList.remove("flipped"); });
+    cardRoot.classList.toggle("flipped", flipped);
+    if (flipped) startTimer(function () { cardRoot.classList.remove("flipped"); if (revealed) maskNumber(); });
     else clearTimer();
   }
 
-  $("cvFlip").addEventListener("click", toggleFlip);
+  $("cvFlip").addEventListener("click", function () {
+    if (!cardRoot) return;
+    var flipped = !cardRoot.classList.contains("flipped");
+    setFlipped(flipped);
+    if (!flipped && revealed) maskNumber();
+  });
+
+  // Tap the card itself to flip it too
+  $("cvCard").addEventListener("click", function () { $("cvFlip").click(); });
 
   $("cvReveal").addEventListener("click", async function () {
     if (!current || !cardRoot) return;
-    if (revealed) { clearTimer(); maskNumber(); return; }
+    if (revealed) { clearTimer(); maskNumber(); setFlipped(false); return; }
     revealed = true;
     cardRoot._num.textContent = fullNumber(current);
     updateButtons();
+    setFlipped(true); // the numbers are on the back, so show the back
     var ok = await SB.copyText(current.number);
     SB.toast(ok ? "Card number copied!" : "Number shown for 10 seconds");
-    startTimer(maskNumber);
   });
 
   $("cvUse").addEventListener("click", function () {
@@ -307,22 +389,48 @@
   });
 
   // ---------- Wiring ----------
+  SB.cards = {
+    openNew: openNew,
+    count: function () { return cards.length; },
+    ready: function () { return cardsReady; }
+  };
+
   SB.on("view", function (name) { viewing = name === "vCard"; });
   SB.on("sheetClosed", function () { viewing = false; clearTimer(); });
   SB.on("profile", renderCards);
 
+  // If you have cards but none is picked, pick the first one
+  function autoPick() {
+    if (autoPicking || !cardsReady || !SB.state.profileLive || !cards.length || SB.activeCard()) return;
+    autoPicking = true;
+    Wallet.setActiveCard(SB.state.uid, cards[0].id).catch(function () {}).then(function () { autoPicking = false; });
+  }
+
   SB.on("start", function (user) {
     cards = [];
+    cardsReady = false;
+    onboarded = false;
     renderCards();
     stopCards = Wallet.watchCards(user.uid, function (list) {
       cards = list;
+      cardsReady = true;
       renderCards();
+      autoPick();
+      // A brand-new account makes its first card right away
+      if (SB.features.requireCard && !onboarded && list.length === 0) {
+        onboarded = true;
+        setTimeout(function () {
+          var sheetOpen = !$("sheet").classList.contains("hidden");
+          if (!sheetOpen && cards.length === 0 && SB.state.uid) openNew(true);
+        }, 900);
+      }
     });
   });
 
   SB.on("stop", function () {
     if (stopCards) { stopCards(); stopCards = null; }
     cards = [];
+    cardsReady = false;
     current = null;
     clearTimer();
   });

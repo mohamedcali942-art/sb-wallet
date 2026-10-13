@@ -26,12 +26,27 @@
 
   // ---------- Settings you can change ----------
   var MAX_FUND = 5000;               // most you can add at once
+  var FEE_RATE = 0.015;              // fee when you send money: 1.5% ...
+  var FEE_MIN = 0.25;                // ... but at least this much ...
+  var FEE_MAX = 5;                   // ... and at most this much
+  var BUSY_MIN_MS = 3000;            // how long the "sending" animation plays (3 seconds)
   var RECEIPT_LIFETIME_HOURS = 24;   // receipts delete themselves after this many hours
   var LIFE_MS = RECEIPT_LIFETIME_HOURS * 3600 * 1000;
   $("lifeHours").textContent = RECEIPT_LIFETIME_HOURS;
 
   // ---------- Shared helpers (also used by cards.js and chat.js) ----------
   var SB = window.SB = { $: $, state: { uid: null, user: null, profile: null, profileLive: false } };
+
+  // ===== FEATURE SWITCHES =====
+  // Part 1 is ON. Part 2 is built too, but switched OFF until we turn it on together.
+  // To turn a feature on later, change false to true on that line.
+  SB.features = Object.assign({
+    fees: false,         // fee when you send money
+    paidColors: false,   // card colors that cost $10
+    requireCard: false,  // you must make a card before you can use the wallet
+    owner: false,        // only the owner can add money, with a second password
+    charts: false        // spending donut + bar charts
+  }, window.__SB_FLAGS || {});
   var listeners = {};
   SB.on = function (name, fn) { (listeners[name] = listeners[name] || []).push(fn); };
   SB.emit = function (name, data) { (listeners[name] || []).forEach(function (fn) { try { fn(data); } catch (e) { console.error(e); } }); };
@@ -106,6 +121,12 @@
     });
     btn._reset = reset;
   }
+
+  function feeFor(amount) {
+    if (!SB.features.fees || !(amount > 0)) return 0;
+    return Math.round(Math.min(Math.max(amount * FEE_RATE, FEE_MIN), FEE_MAX) * 100) / 100;
+  }
+  SB.feeFor = feeFor;
 
   SB.toast = toast; SB.money = money; SB.sleep = sleep; SB.fullName = fullName;
   SB.colorClass = colorClass; SB.copyText = copyText; SB.twoStep = twoStep; SB.timeAgo = timeAgo;
@@ -276,7 +297,7 @@
     FIELDS.forEach(function (id) { $(id).value = ""; });
     $("password").type = "password";
     $("password2").type = "password";
-    $("showPw").textContent = "Show";
+    $("showPw").classList.remove("on");
   }
 
   function setMode(next) {
@@ -313,7 +334,7 @@
     var show = $("password").type === "password";
     $("password").type = show ? "text" : "password";
     $("password2").type = show ? "text" : "password";
-    $("showPw").textContent = show ? "Hide" : "Show";
+    $("showPw").classList.toggle("on", show);
   });
 
   $("authForm").addEventListener("submit", async function (e) {
@@ -505,19 +526,21 @@
   }
 
   function renderQuick(list) {
-    var row = $("quickRow");
-    row.innerHTML = "";
-    row.appendChild(quickItem("+", "Add New", true, function () { startSend(); }));
-    var seen = {};
-    var count = 0;
-    list.forEach(function (t) {
-      var u = t.counterpartUsername;
-      if (t.type === "send" && u && !seen[u] && count < 5) {
-        seen[u] = true;
-        count++;
-        var first = (t.counterpartName || u).split(" ")[0];
-        row.appendChild(quickItem(first.charAt(0).toUpperCase(), first, false, function () { startSend(u); }));
-      }
+    ["quickRow", "quickRowHome"].forEach(function (id) {
+      var row = $(id);
+      row.innerHTML = "";
+      row.appendChild(quickItem("+", "Add New", true, function () { startSend(); }));
+      var seen = {};
+      var count = 0;
+      list.forEach(function (t) {
+        var u = t.counterpartUsername;
+        if (t.type === "send" && u && !seen[u] && count < 5) {
+          seen[u] = true;
+          count++;
+          var first = (t.counterpartName || u).split(" ")[0];
+          row.appendChild(quickItem(first.charAt(0).toUpperCase(), first, false, function () { startSend(u); }));
+        }
+      });
     });
   }
 
@@ -545,13 +568,6 @@
     shown.forEach(function (t) { box.appendChild(txnRow(t)); });
     $("txnEmpty").classList.toggle("hidden", shown.length > 0);
 
-    var now = new Date();
-    var spent = 0;
-    list.forEach(function (t) {
-      var d = dateOf(t);
-      if (t.amount < 0 && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) spent += Math.abs(t.amount);
-    });
-    $("spentAmt").textContent = money(spent);
 
     renderQuick(list);
   }
@@ -587,8 +603,8 @@
   var personResolve = null;
   var funding = false; // true while a Fund / Send / card step is in progress
 
-  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vNotifs", "vDelete"];
-  var HIGH = ["vSearch", "vDelete", "vCardNew"]; // these have typing, so they sit high (keyboard won't cover them)
+  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vNotifs", "vDelete", "vFundPw", "vOwner"];
+  var HIGH = ["vSearch", "vDelete", "vCardNew", "vFundPw", "vOwner"]; // these have typing, so they sit high (keyboard won't cover them)
 
   var sheetToken = 0;
   var lockY = 0;
@@ -616,7 +632,7 @@
     $("sheetClose").classList.toggle("hidden", name === "vBusy");
     $("sheet").classList.toggle("high", HIGH.indexOf(name) !== -1);
     $("sheet").classList.remove("hidden", "leaving");
-    $("sheetBack").classList.remove("hidden");
+    $("sheetBack").classList.remove("hidden", "leaving");
     SB.emit("view", name);
   }
 
@@ -636,14 +652,16 @@
     var s = $("sheet");
     var token = sheetToken;
     s.classList.add("leaving");
+    $("sheetBack").classList.add("leaving");
     setTimeout(function () {
       if (token !== sheetToken) return; // a new sheet opened meanwhile
       s.classList.add("hidden");
       s.classList.remove("leaving");
+      $("sheetBack").classList.remove("leaving");
       $("sheetBack").classList.add("hidden");
       unlockScroll();
       SB.emit("sheetClosed");
-    }, 250);
+    }, 400);
   }
   SB.showView = showView; SB.closeSheet = closeSheet;
 
@@ -673,6 +691,8 @@
   var amountMax = MAX_FUND;
   var amountBaseSub = "";
   var amountOverMsg = "";
+  var amountFee = false;   // true on the Send screen: show the fee
+  var amountBalance = 0;
 
   function fmtAmt(s) {
     if (!s) return "$0";
@@ -686,9 +706,18 @@
   function renderAmount() {
     $("amountText").textContent = fmtAmt(amtStr);
     var v = amtValue();
-    var over = v > amountMax;
-    $("amountSub").textContent = over ? amountOverMsg : amountBaseSub;
+    var fee = amountFee ? feeFor(v) : 0;
+    var over = amountFee ? (v + fee > amountBalance) : (v > amountMax);
+    var msg = amountFee
+      ? (fee > 0 ? "You need " + money(v + fee) + " (amount + fee). You have " + money(amountBalance) + "." : "You only have " + money(amountBalance) + ".")
+      : amountOverMsg;
+    $("amountSub").textContent = over ? msg : amountBaseSub;
     $("amountSub").classList.toggle("bad", over);
+    if (amountFee && SB.features.fees) {
+      $("feeLine").innerHTML = v > 0 ? "Fee <b>" + money(fee) + "</b> · You pay <b>" + money(v + fee) + "</b>" : "Fee: 1.5% (at least $0.25)";
+    } else {
+      $("feeLine").textContent = "";
+    }
     $("confirmFund").disabled = !(v > 0 && !over);
   }
 
@@ -714,6 +743,8 @@
     return new Promise(function (resolve) {
       amtStr = "";
       amountMax = opts.max;
+      amountFee = !!opts.fee;
+      amountBalance = opts.balance || 0;
       amountBaseSub = opts.sub;
       amountOverMsg = opts.over;
       $("amountTitle").textContent = opts.title;
@@ -738,7 +769,8 @@
 
   $("confirmFund").addEventListener("click", function () {
     var v = amtValue();
-    if (amountResolve && v > 0 && v <= amountMax) {
+    var okAmt = amountFee ? (v > 0 && v + feeFor(v) <= amountBalance) : (v > 0 && v <= amountMax);
+    if (amountResolve && okAmt) {
       var r = amountResolve;
       amountResolve = null;
       r(v);
@@ -861,23 +893,35 @@
 
   var afterDone = null;
 
-  // Spinner, then green check + chime, then a Done button
-  async function runBusy(workingText, task, successText, doneFn) {
+  // Spinner for at least 3 seconds (with little steps), then green check + chime, then a Done button
+  async function runBusy(workingText, task, successText, doneFn, steps) {
     holdBalance = true;
     afterDone = doneFn || null;
     var status = $("statusIcon");
     status.className = "status spin";
     $("busyText").textContent = workingText;
     $("doneBtn").classList.add("hidden");
+    var stepList = steps || ["Checking everything…", workingText, "Almost there…"];
+    $("busyStep").textContent = stepList[0];
     showView("vBusy");
 
     var began = Date.now();
-    await task();
-    var wait = 1500 - (Date.now() - began);
-    if (wait > 0) await sleep(wait);
+    var ticker = setInterval(function () {
+      var i = Math.min(stepList.length - 1, Math.floor((Date.now() - began) / (BUSY_MIN_MS / stepList.length)));
+      $("busyStep").textContent = stepList[i];
+    }, 250);
+
+    try {
+      await task();
+      var wait = BUSY_MIN_MS - (Date.now() - began);
+      if (wait > 0) await sleep(wait);
+    } finally {
+      clearInterval(ticker);
+    }
 
     status.className = "status ok";
     $("busyText").textContent = successText;
+    $("busyStep").textContent = "";
     $("doneBtn").classList.remove("hidden");
     chime();
   }
@@ -898,34 +942,116 @@
     var c = SB.activeCard ? SB.activeCard() : null;
     return c ? { name: c.name, last4: c.last4, frozen: !!c.frozen } : null;
   }
-  function cardFrozenBlock() {
+
+  // Checks the card rules. Returns { card } (card can be null) or null if something blocks you.
+  function needCard() {
     var c = cardInfo();
+    if (SB.features.requireCard) {
+      if (!SB.state.profileLive || !SB.cards || !SB.cards.ready()) {
+        toast("Still loading your account. One moment.");
+        return null;
+      }
+      if (SB.cards.count() === 0) {
+        toast("Make your first card first.");
+        SB.cards.openNew(true);
+        return null;
+      }
+      if (!c) {
+        toast("Pick a card to use first.");
+        return null;
+      }
+    }
     if (c && c.frozen) {
       toast("Your card " + c.name + " is frozen. Unfreeze it first.");
-      return true;
+      return null;
     }
-    return false;
+    return { card: c ? { name: c.name, last4: c.last4 } : null };
   }
+  SB.needCard = needCard;
+
+  // ---------- Owner: the only person who can add money ----------
+  SB.state.owner = null;
+  SB.state.ownerLoaded = false;
+  var fundPwResolve = null;
+
+  function askFundPassword() {
+    return new Promise(function (resolve) {
+      $("fundPwInput").value = "";
+      $("fundPwError").textContent = "";
+      $("fundPwBtn").disabled = false;
+      fundPwResolve = resolve;
+      showView("vFundPw");
+      $("fundPwInput").focus({ preventScroll: true });
+    });
+  }
+
+  async function submitFundPassword() {
+    var pw = $("fundPwInput").value;
+    if (!pw) { $("fundPwError").textContent = "Type the funding password."; return; }
+    $("fundPwBtn").disabled = true;
+    $("fundPwError").textContent = "";
+    var ok = false;
+    try {
+      ok = await Wallet.checkFundPassword(pw);
+    } catch (e) {
+      $("fundPwError").textContent = Wallet.friendlyError(e);
+      $("fundPwBtn").disabled = false;
+      return;
+    }
+    if (!fundPwResolve) return;
+    if (ok) {
+      $("fundPwInput").blur();
+      var r = fundPwResolve;
+      fundPwResolve = null;
+      r(true);
+    } else {
+      $("fundPwError").textContent = "That funding password isn't right.";
+      $("fundPwBtn").disabled = false;
+      var box = $("fundPwInput");
+      box.classList.remove("bad");
+      void box.offsetWidth;
+      box.classList.add("bad");
+    }
+  }
+  $("fundPwBtn").addEventListener("click", submitFundPassword);
+  $("fundPwInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); submitFundPassword(); }
+  });
+  $("fundPwInput").addEventListener("input", function () { $("fundPwInput").classList.remove("bad"); $("fundPwError").textContent = ""; });
 
   // ---------- Fund ----------
   function startFund() {
-    if (cardFrozenBlock()) return;
+    var owner = SB.features.owner;
+    if (owner) {
+      // Only the owner can add money
+      if (!SB.state.ownerLoaded) { toast("Still loading… one moment."); return; }
+      if (!SB.state.owner) { toast("Adding money isn't set up yet. The owner needs to set the funding password."); return; }
+      if (SB.state.owner.uid !== SB.state.uid) { toast("Only the SB Wallet owner can add money."); return; }
+    }
+    var gate = needCard();
+    if (!gate) return;
+    var card = gate.card;
+
     flow(async function () {
-      if (!(await needPin())) return;
+      if (!owner && !(await needPin())) return;
 
       var amount = await askAmount({
         title: "Add money",
         sub: "Fake money. Up to " + money(MAX_FUND) + " each time.",
         max: MAX_FUND,
         over: "The most you can add is " + money(MAX_FUND) + ".",
-        button: "Confirm Funding"
+        button: owner ? "Continue" : "Confirm Funding"
       });
       if (amount === null) return;
 
-      if (!(await pinGate("Adding " + money(amount)))) return;
+      if (owner) {
+        if (!(await askFundPassword())) return;
+      } else if (!(await pinGate("Adding " + money(amount)))) {
+        return;
+      }
 
-      var card = cardInfo();
-      await runBusy("Adding money…", function () { return Wallet.fund(SB.state.uid, amount, card); }, money(amount) + " added!");
+      await runBusy("Adding money…", function () { return Wallet.fund(SB.state.uid, amount, card); }, money(amount) + " added!", null,
+        [owner ? "Checking the owner password…" : "Checking your PIN…", "Adding money…", "Almost there…"]);
     });
   }
 
@@ -1014,7 +1140,9 @@
   });
 
   function startSend(prefill) {
-    if (cardFrozenBlock()) return;
+    var gate = needCard();
+    if (!gate) return;
+    var card = gate.card;
     flow(async function () {
       if (!(await needPin())) return;
 
@@ -1026,19 +1154,22 @@
         title: "Send money",
         sub: "Your balance: " + money(balance),
         max: balance,
-        over: "You only have " + money(balance) + ".",
+        balance: balance,
+        fee: true,
         button: "Send Money",
         who: person
       });
       if (amount === null) return;
 
-      if (!(await pinGate("Sending " + money(amount) + " to " + person.firstName))) return;
+      var fee = feeFor(amount);
+      if (!(await pinGate("Sending " + money(amount) + " + " + money(fee) + " fee"))) return;
 
-      var card = cardInfo();
       await runBusy(
         "Sending…",
-        function () { return Wallet.sendMoney(SB.state.uid, person.uid, amount, card); },
-        money(amount) + " sent to " + person.firstName + "!"
+        function () { return Wallet.sendMoney(SB.state.uid, person.uid, amount, fee, card); },
+        money(amount) + " sent to " + person.firstName + "!",
+        null,
+        ["Checking " + person.firstName + "'s account…", "Sending " + money(amount) + "…", "Almost there…"]
       );
     });
   }
@@ -1059,6 +1190,13 @@
     });
     $("rcRef").textContent = refOf(t);
     $("rcPaid").textContent = paidWith(t);
+    var hasFee = t.type === "send" && t.fee > 0;
+    $("rcSentRow").classList.toggle("hidden", !hasFee);
+    $("rcFeeRow").classList.toggle("hidden", !hasFee);
+    if (hasFee) {
+      $("rcSent").textContent = money(t.sent);
+      $("rcFee").textContent = money(t.fee);
+    }
 
     var hasPerson = !!t.counterpartUsername;
     $("rcPersonRow").classList.toggle("hidden", !hasPerson);
@@ -1150,13 +1288,99 @@
     });
   });
 
+
+  // ---------- Owner tools ----------
+  var accTaps = 0;
+  var accTapTimer = null;
+  $("accTitle").addEventListener("click", function () {
+    accTaps++;
+    clearTimeout(accTapTimer);
+    accTapTimer = setTimeout(function () { accTaps = 0; }, 1500);
+    if (accTaps >= 5) {
+      accTaps = 0;
+      try { localStorage.setItem("sbw_owner_ui", "1"); } catch (e) {}
+      renderOwner();
+      toast("Owner tools shown");
+    }
+  });
+
+  function renderOwner() {
+    if (!SB.features.owner) { $("ownerCard").classList.add("hidden"); return; }
+    var owner = SB.state.owner;
+    var mine = !!(owner && owner.uid === SB.state.uid);
+    var revealed = false;
+    try { revealed = !!localStorage.getItem("sbw_owner_ui"); } catch (e) {}
+    var show = mine || (!owner && revealed && SB.state.ownerLoaded);
+    $("ownerCard").classList.toggle("hidden", !show);
+    if (!show) return;
+    if (mine) {
+      $("ownerStatus").textContent = "You are the owner. Only you can add money, and only with your funding password.";
+      $("ownerBtn").textContent = "Change funding password";
+    } else {
+      $("ownerStatus").textContent = "No owner yet. The first person to set a funding password becomes the owner.";
+      $("ownerBtn").textContent = "Set funding password";
+    }
+  }
+  SB.on("owner", renderOwner);
+
+  $("ownerBtn").addEventListener("click", function () {
+    var mine = !!(SB.state.owner && SB.state.owner.uid === SB.state.uid);
+    $("ownerTitle").textContent = mine ? "Change funding password" : "Set funding password";
+    $("ownerOld").classList.toggle("hidden", !mine);
+    ["ownerOld", "ownerPw1", "ownerPw2"].forEach(function (id) { $(id).value = ""; });
+    $("ownerError").textContent = "";
+    $("ownerSave").disabled = false;
+    showView("vOwner");
+  });
+
+  $("ownerSave").addEventListener("click", async function () {
+    var mine = !!(SB.state.owner && SB.state.owner.uid === SB.state.uid);
+    var p1 = $("ownerPw1").value;
+    var p2 = $("ownerPw2").value;
+    var err = $("ownerError");
+    err.textContent = "";
+    if (mine && !$("ownerOld").value) { err.textContent = "Type your current funding password."; return; }
+    if (p1.length < 10) { err.textContent = "Use at least 10 characters."; return; }
+    if (!/[A-Za-z]/.test(p1) || !/[0-9]/.test(p1)) { err.textContent = "Use letters and numbers."; return; }
+    if (p1 !== p2) { err.textContent = "The two passwords don't match."; return; }
+    $("ownerSave").disabled = true;
+    try {
+      if (mine) await Wallet.changeFundPassword($("ownerOld").value, p1);
+      else await Wallet.claimOwner(SB.state.uid, SB.state.user.email, p1);
+      closeSheet();
+      toast(mine ? "Funding password changed" : "You are now the owner");
+    } catch (e) {
+      err.textContent = Wallet.friendlyError(e);
+      $("ownerSave").disabled = false;
+    }
+  });
+
+  // ---------- Switch-dependent look ----------
+  document.body.classList.toggle("no-charts", !SB.features.charts);
+  if (!SB.features.charts) {
+    $("tab-activity").querySelector("h2").textContent = "Activity";
+    document.querySelector('.tabbtn[data-tab="activity"] span').textContent = "Activity";
+    $("tab-activity").querySelector(".note").lastChild.textContent = " hours.";
+  }
+
+  // ---------- Small links that jump to tabs ----------
+  $("seeAllPay").addEventListener("click", function () { switchTab("pay"); });
+  $("viewAllTx").addEventListener("click", function () { switchTab("activity"); });
+  $("spendTile").addEventListener("click", function () { switchTab("activity"); });
+  $("feeTile").addEventListener("click", function () { switchTab("activity"); });
+  $("issueBanner").addEventListener("click", function () { if (SB.cards) SB.cards.openNew(true); });
+
   // ---------- The app ----------
+  var stopOwner = null;
   var stopProfile = null;
   var stopTxns = null;
 
   function stopWatching() {
     if (stopProfile) { stopProfile(); stopProfile = null; }
     if (stopTxns) { stopTxns(); stopTxns = null; }
+    if (stopOwner) { stopOwner(); stopOwner = null; }
+    SB.state.owner = null;
+    SB.state.ownerLoaded = false;
     SB.emit("stop");
   }
 
@@ -1263,6 +1487,12 @@
       cleanOldReceipts(list);
     });
 
+    stopOwner = Wallet.watchOwner(function (owner) {
+      SB.state.owner = owner;
+      SB.state.ownerLoaded = true;
+      SB.emit("owner", owner);
+    });
+
     SB.emit("start", user);
   }
 
@@ -1271,6 +1501,28 @@
     clearForm();
     await Wallet.logOut();
   });
+
+  // Draw the logo as a picture so iPhone can use it as the home screen icon
+  function makeTouchIcon() {
+    try {
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="180" height="180">' +
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7CB0FF"/><stop offset=".5" stop-color="#3B6BFF"/><stop offset="1" stop-color="#6D28D9"/></linearGradient></defs>' +
+        '<rect width="100" height="100" fill="url(#g)"/>' +
+        '<g transform="translate(50 47) scale(.78) translate(-50 -50)" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M45 34 C45 27 40 23 32 23 C23 23 18 28 18 34 C18 41 23 44 32 47 C41 50 46 54 46 63 C46 71 41 76 32 76 C24 76 19 72 18 65"/>' +
+        '<path d="M58 23 V76 M58 23 H69 C77 23 81 28 81 35 C81 42 77 48 69 48 H58 M58 48 H71 C79 48 84 54 84 62 C84 71 79 76 70 76 H58"/></g>' +
+        '<circle cx="50" cy="84" r="3" fill="#7DF9FF"/></svg>';
+      var img = new Image();
+      img.onload = function () {
+        var c = document.createElement("canvas");
+        c.width = 180; c.height = 180;
+        c.getContext("2d").drawImage(img, 0, 0, 180, 180);
+        $("touchIcon").href = c.toDataURL("image/png");
+      };
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    } catch (e) {}
+  }
+  makeTouchIcon();
 
   // ---------- Start: splash, then login or home ----------
   var splashDelay = new Promise(function (resolve) { setTimeout(resolve, 1400); });

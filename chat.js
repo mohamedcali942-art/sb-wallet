@@ -12,6 +12,8 @@
   var prevUnread = {};
   var thread = null;   // { id, other: { uid, firstName, lastName, username } }
   var stopMsgs = null;
+  var nodes = {};      // messages already on screen, by id (so only NEW ones are added and pop in)
+  var firstPaint = true;
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -100,18 +102,27 @@
 
   function renderMessages(list) {
     var box = $("msgList");
-    box.innerHTML = "";
     if (!list.length) {
-      box.appendChild(el("p", "msg-empty", "Say hi to " + (thread ? thread.other.firstName : "them") + " 👋"));
+      if (!Object.keys(nodes).length) {
+        box.innerHTML = "";
+        box.appendChild(el("p", "msg-empty", "Say hi to " + (thread ? thread.other.firstName : "them") + " 👋"));
+      }
       return;
     }
+    var empty = box.querySelector(".msg-empty");
+    if (empty) empty.remove();
+    var added = false;
     list.forEach(function (m) {
-      var b = el("div", "bubble " + (m.from === SB.state.uid ? "me" : "them"));
+      if (nodes[m.id]) return; // already there: leave it alone so its animation isn't interrupted
+      var b = el("div", "bubble " + (m.from === SB.state.uid ? "me" : "them") + (firstPaint ? "" : " pop"));
       b.appendChild(document.createTextNode(m.text));
       b.appendChild(el("small", "", timeText(m)));
+      b.addEventListener("animationend", function () { b.classList.remove("pop"); });
       box.appendChild(b);
+      nodes[m.id] = b;
+      added = true;
     });
-    box.scrollTop = box.scrollHeight;
+    if (added) box.scrollTop = box.scrollHeight;
   }
 
   function openThread(person) {
@@ -120,6 +131,9 @@
     var id = Wallet.chatId(SB.state.uid, person.uid);
     if (stopMsgs) { stopMsgs(); stopMsgs = null; }
     thread = { id: id, other: person };
+    nodes = {};
+    firstPaint = true;
+    $("msgList").innerHTML = "";
 
     $("thName").textContent = SB.fullName(person);
     $("thUser").textContent = person.username;
@@ -128,13 +142,14 @@
     $("msgInput").value = "";
     renderMessages([]);
 
-    $("thread").classList.remove("hidden");
+    $("thread").classList.remove("hidden", "leaving");
     SB.lockScroll();
     fitThread();
 
     stopMsgs = Wallet.watchMessages(id, function (list) {
       if (!thread || thread.id !== id) return;
       renderMessages(list);
+      firstPaint = false; // from now on, only NEW messages pop in
       if (list.length && list[list.length - 1].from !== SB.state.uid) Wallet.markRead(SB.state.uid, id);
     });
     Wallet.markRead(SB.state.uid, id);
@@ -145,8 +160,15 @@
     var was = thread;
     thread = null;
     $("msgInput").blur();
-    $("thread").classList.add("hidden");
-    if (was) SB.unlockScroll();
+    var t = $("thread");
+    if (!was) { t.classList.add("hidden"); return; }
+    t.classList.add("leaving"); // slides away to the right
+    setTimeout(function () {
+      if (thread) return; // another chat opened meanwhile
+      t.classList.add("hidden");
+      t.classList.remove("leaving");
+      SB.unlockScroll();
+    }, 400);
   }
 
   $("thBack").addEventListener("click", closeThread);

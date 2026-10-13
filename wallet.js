@@ -31,9 +31,22 @@
   function userRef(uid) { return db.collection("users").doc(uid); }
 
   // Every new account starts with this much FAKE money
-  var STARTING_BALANCE = 1000;
+  var STARTING_BALANCE = 100;
 
   function round2(n) { return Math.round(n * 100) / 100; }
+
+  // Today's date as 2026-10-12 (used for the spending charts)
+  function dayKey() {
+    var d = new Date();
+    return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+  }
+  // Adds numbers to today's chart totals, e.g. { sent: 20, fee: 0.3 }
+  function statsPatch(patch, into) {
+    Object.keys(patch).forEach(function (k) {
+      if (patch[k]) into["stats.d." + dayKey() + "." + k] = FV.increment(patch[k]);
+    });
+    return into;
+  }
   function makeRef() {
     var chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     var out = "";
@@ -161,13 +174,16 @@
     return { uid: uid, firstName: d.firstName, lastName: d.lastName || "", username: d.username };
   }
 
-  // Send money: takes from you, gives to them, writes a receipt for both
-  async function sendMoney(senderUid, recipientUid, amount, card) {
+  // Send money: takes amount + fee from you, gives the amount to them, writes a receipt for both
+  async function sendMoney(senderUid, recipientUid, amount, fee, card) {
     if (senderUid === recipientUid) throw new Error("self");
+    fee = round2(fee || 0);
+    var total = round2(amount + fee);
     var sRef = userRef(senderUid);
     var rRef = userRef(recipientUid);
     var sTx = sRef.collection("transactions").doc();
     var rTx = rRef.collection("transactions").doc();
+    var feesRef = db.collection("config").doc("fees");
     var ref = makeRef();
 
     await db.runTransaction(async function (tx) {
@@ -177,15 +193,16 @@
       if (!sSnap.exists) throw new Error("no-sender");
       var s = sSnap.data();
       var r = rSnap.data();
-      if ((s.balance || 0) < amount) throw new Error("insufficient");
+      if ((s.balance || 0) < total) throw new Error("insufficient");
 
       var sName = (s.firstName + " " + (s.lastName || "")).trim();
       var rName = (r.firstName + " " + (r.lastName || "")).trim();
 
-      tx.update(sRef, { balance: round2((s.balance || 0) - amount) });
-      tx.update(rRef, { balance: round2((r.balance || 0) + amount) });
+      tx.update(sRef, statsPatch({ sent: amount, fee: fee }, { balance: round2((s.balance || 0) - total) }));
+      tx.update(rRef, statsPatch({ in: amount }, { balance: round2((r.balance || 0) + amount) }));
+      if (fee > 0) tx.set(feesRef, { total: FV.increment(fee) }, { merge: true }); // for now the fee just leaves your balance
       tx.set(sTx, Object.assign({
-        type: "send", title: "Sent to " + rName, amount: -amount,
+        type: "send", title: "Sent to " + rName, amount: -total, sent: amount, fee: fee,
         counterpartUid: recipientUid, counterpartName: rName, counterpartUsername: r.username,
         ref: ref, createdAt: stamp()
       }, cardFields(card)));
@@ -249,12 +266,15 @@
     return body + luhnCheckDigit(body);
   }
 
-  async function createCard(uid, name, finish, holder) {
+  // price: 0 for the normal color, more for the others (taken from your balance)
+  async function createCard(uid, name, finish, holder, price) {
+    price = round2(price || 0);
     var number = makeCardNumber();
     var exp = new Date();
     exp.setFullYear(exp.getFullYear() + 4);
-    var ref = userRef(uid).collection("cards").doc();
-    await ref.set({
+    var uref = userRef(uid);
+    var ref = uref.collection("cards").doc();
+    var data = {
       name: name,
       finish: finish,
       brand: Math.random() < 0.5 ? "visa" : "mastercard",
@@ -266,6 +286,21 @@
       holder: holder,
       frozen: false,
       createdAt: stamp()
+    };
+    if (price <= 0) {
+      await ref.set(data);
+      return ref.id;
+    }
+    var txRef = uref.collection("transactions").doc();
+    await db.runTransaction(async function (tx) {
+      var snap = await tx.get(uref);
+      var balance = (snap.data().balance || 0);
+      if (balance < price) throw new Error("insufficient");
+      tx.update(uref, statsPatch({ card: price }, { balance: round2(balance - price) }));
+      tx.set(ref, data);
+      tx.set(txRef, {
+        type: "card", title: "New card: " + name, amount: -price, ref: makeRef(), createdAt: stamp()
+      });
     });
     return ref.id;
   }
@@ -345,11 +380,61 @@
     var snap = await ref.get();
     await deleteCollection(ref.collection("transactions"));
     await deleteCollection(ref.collection("cards"));
+    var ownerSnap = await ownerRef().get(); // if you are the owner, the owner spot opens up again
+    if (ownerSnap.exists && ownerSnap.data().uid === uid) await ownerRef().delete();
     if (snap.exists && snap.data().username) {
       await db.collection("usernames").doc(snap.data().username.toLowerCase()).delete();
     }
     await ref.delete();
     await user.delete();
+  }
+
+  // ---------- Owner: the only person who can add money ----------
+  function toHex(buf) {
+    return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+  async function stretch(password, saltHex) {
+    if (!(window.crypto && window.crypto.subtle)) throw new Error("no-crypto");
+    var enc = new TextEncoder();
+    var salt = new Uint8Array(saltHex.match(/.{2}/g).map(function (h) { return parseInt(h, 16); }));
+    var key = await window.crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+    var bits = await window.crypto.subtle.deriveBits({ name: "PBKDF2", salt: salt, iterations: 150000, hash: "SHA-256" }, key, 256);
+    return toHex(bits);
+  }
+  function randomSalt() {
+    var a = new Uint8Array(16);
+    window.crypto.getRandomValues(a);
+    return toHex(a);
+  }
+  var ownerRef = function () { return db.collection("config").doc("owner"); };
+
+  function watchOwner(callback) {
+    return ownerRef().onSnapshot(function (snap) { callback(snap.exists ? snap.data() : null); });
+  }
+
+  // The first person to do this becomes the owner
+  async function claimOwner(uid, email, fundPassword) {
+    var salt = randomSalt();
+    var hash = await stretch(fundPassword, salt);
+    await db.runTransaction(async function (tx) {
+      var snap = await tx.get(ownerRef());
+      if (snap.exists) throw new Error("owner-exists");
+      tx.set(ownerRef(), { uid: uid, email: email, salt: salt, hash: hash, createdAt: stamp() });
+    });
+  }
+
+  async function checkFundPassword(password) {
+    var snap = await ownerRef().get();
+    if (!snap.exists) return false;
+    var d = snap.data();
+    return (await stretch(password, d.salt)) === d.hash;
+  }
+
+  async function changeFundPassword(oldPassword, newPassword) {
+    if (!(await checkFundPassword(oldPassword))) throw new Error("bad-fund-password");
+    var salt = randomSalt();
+    var hash = await stretch(newPassword, salt);
+    await ownerRef().update({ salt: salt, hash: hash });
   }
 
   // ---------- Errors in plain words ----------
@@ -358,7 +443,10 @@
       "insufficient": "You don't have enough money for that.",
       "not-found": "That person doesn't have an account.",
       "self": "You can't send money to yourself.",
-      "no-sender": "Your account wasn't found. Log in again."
+      "no-sender": "Your account wasn't found. Log in again.",
+      "owner-exists": "Someone already set up the owner password.",
+      "bad-fund-password": "That funding password isn't right.",
+      "no-crypto": "This browser can't do secure passwords. Use Safari."
     };
     if (byMessage[err.message]) return byMessage[err.message];
 
@@ -386,6 +474,7 @@
     createCard: createCard, watchCards: watchCards, setCardFrozen: setCardFrozen, deleteCard: deleteCard, setActiveCard: setActiveCard,
     chatId: chatId, sendMessage: sendMessage, watchChats: watchChats, watchMessages: watchMessages, markRead: markRead,
     checkPassword: checkPassword, deleteAccount: deleteAccount,
+    watchOwner: watchOwner, claimOwner: claimOwner, checkFundPassword: checkFundPassword, changeFundPassword: changeFundPassword,
     friendlyError: friendlyError
   };
 })();
