@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="SB Wallet">
+  <meta name="theme-color" content="#0B1B33">
+  <meta name="description" content="SB Wallet: a fake-money practice wallet. Nothing here is real money.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="apple-touch-icon" id="touchIcon">
+  <title>SB Wallet</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <noscript><style>#splash{display:none}</style><p style="padding:2rem;text-align:center;color:#8794A8">SB Wallet needs JavaScript. Turn it on in your browser settings, then reload.</p></noscript>
+
+  <!-- The SB logo (drawn once, used everywhere as a fallback) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="gS" gradientUnits="userSpaceOnUse" x1="40" y1="176" x2="140" y2="28">
+        <stop offset="0" stop-color="#55B9EE"/><stop offset=".5" stop-color="#B8E3FA"/><stop offset="1" stop-color="#F4FAFF"/>
+      </linearGradient>
+      <linearGradient id="gB" gradientUnits="userSpaceOnUse" x1="112" y1="186" x2="118" y2="50">
+        <stop offset="0" stop-color="#3DF0B0"/><stop offset=".55" stop-color="#22DDD0"/><stop offset="1" stop-color="#1CBDF0"/>
+      </linearGradient>
+      <filter id="blurGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5"/></filter>
+      <symbol id="sbLogo" viewBox="20 10 176 180">
+        <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M60 170 L128 140 Q148 130 130 118 L58 84 Q38 72 58 62 L128 30" stroke="#9FD8FF" stroke-width="22" opacity=".35" filter="url(#blurGlow)"/>
+          <path d="M112 184 C150 186 176 164 168 140 C162 120 138 112 114 110 C142 106 164 96 164 78 C164 56 140 48 116 52" stroke="#2CF0D0" stroke-width="22" opacity=".35" filter="url(#blurGlow)"/>
+          <path d="M60 170 L128 140 Q148 130 130 118 L58 84 Q38 72 58 62 L128 30" stroke="url(#gS)" stroke-width="18"/>
+          <path d="M112 184 C150 186 176 164 168 140 C162 120 138 112 114 110 C142 106 164 96 164 78 C164 56 140 48 116 52" stroke="url(#gB)" stroke-width="18"/>
+          <path d="M60 170 L128 140 Q148 130 130 118 L58 84 Q38 72 58 62 L128 30" stroke="#fff" stroke-width="3.6" opacity=".6" transform="translate(-3.2 -3.2)"/>
+        </g>
+      </symbol>
+    </defs>
+  </svg>
+
+  <!-- Splash: your logo fades in over floating money -->
+  <div id="splash" class="splash">
+    <div id="splashMoney" class="money-bg"></div>
+    <img id="splashLogo" class="splash-logo" alt="SuperBase Wallet" hidden>
+    <svg id="splashFallback" class="logo splash-fallback" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
+    <p id="splashMsg" class="splash-msg"></p>
+  </div>
+
+  <!-- Sign up / Log in -->
+  <main id="auth" class="screen hidden">
+    <div id="authMoney" class="money-bg faint"></div>
+    <div class="auth-wrap">
+      <img id="markImg" class="logo small mark-img" alt="SB" hidden>
+      <svg id="markFallback" class="logo small" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
+      <h1 id="authTitle">Welcome to SB Wallet</h1>
+      <p class="muted" id="authSub">Make your account to get started.</p>
+
+      <div class="segment">
+        <button id="tabSignup" class="seg active" type="button">Sign up</button>
+        <button id="tabLogin" class="seg" type="button">Log in</button>
+      </div>
+
+      <form id="authForm" class="auth-form" novalidate autocomplete="on">
+        <div id="nameRow" class="row">
+          <input id="firstName" aria-label="First name" name="given-name" type="text" placeholder="First name" autocomplete="given-name" autocapitalize="words" maxlength="30">
+          <input id="lastName" aria-label="Last name" name="family-name" type="text" placeholder="Last name" autocomplete="family-name" autocapitalize="words" maxlength="30">
+        </div>
+        <input id="email" aria-label="Email" name="email" type="email" inputmode="email" placeholder="Email, like name@gmail.com" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <div class="pw-wrap">
+          <input id="password" aria-label="Password" name="password" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="none" autocorrect="off">
+          <button id="showPw" class="show-pw" type="button" aria-label="Show password">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <input id="password2" aria-label="Type your password again" name="password2" type="password" placeholder="Type the password again" autocomplete="new-password" autocapitalize="none" autocorrect="off">
+
+        <p id="authHint" class="hint-line"></p>
+        <p id="authError" class="error"></p>
+        <button id="authBtn" class="primary" type="submit" disabled>Create account</button>
+      </form>
+      <p class="tiny">Fake money only. Nothing here is real.</p>
+    </div>
+  </main>
+
+  <!-- The app (after login) -->
+  <div id="app" class="hidden">
+
+    <!-- HOME -->
+    <section id="tab-home" class="tab active">
+      <header class="brand-row">
+        <div class="brand">
+          <img id="brandImg" class="brand-img" alt="" hidden>
+          <svg id="brandFallback" class="brand-mark" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
+          <span class="brand-name">SB Wallet</span>
+        </div>
+        <div class="round-btns">
+          <button id="bellBtn" class="round-btn" type="button" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+            <span id="bellBadge" class="badge hidden">0</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="hero" id="hero">
+        <p class="hero-label">Your total balance</p>
+        <p id="balance" class="hero-balance">$0.00</p>
+        <div class="hero-pills">
+          <span class="pill-chip" id="todayPill">In today: $0.00</span>
+          <span class="pill-chip" id="heroCards">0 cards</span>
+        </div>
+      </div>
+
+      <div class="acts4">
+        <button class="act3" id="requestTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M15 17H7V9"/></svg></span>
+          <span>Request</span>
+        </button>
+        <button class="act3 go" id="fundTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          <span>Add Fund</span>
+        </button>
+        <button class="act3" id="sendTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span>
+          <span>Send</span>
+        </button>
+        <button class="act3" id="scanTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg></span>
+          <span>Scan</span>
+        </button>
+      </div>
+
+      <div id="lockBanners" class="lock-banners"></div>
+
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">My Cards</p>
+          <button id="seeAllCards" class="link-btn" type="button">See All</button>
+        </div>
+        <div id="cardList" class="cards-row"></div>
+        <p id="cardListEmpty" class="muted small list-empty hidden">No cards yet. Make your first one.</p>
+        <div class="list-foot">
+          <span id="cardsCount" class="muted small"></span>
+          <button id="homeFreezeAll" class="link-btn" type="button">Freeze all</button>
+        </div>
+      </div>
+
+      <div class="list-card" id="reqCard">
+        <div class="list-head">
+          <p class="card-title">Requests</p>
+        </div>
+        <div id="reqList" class="req-list"></div>
+        <div id="reqEmpty" class="empty">
+          <p class="muted">Money you ask for, and money people ask you for, shows up here.</p>
+        </div>
+      </div>
+
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">Messages</p>
+          <span class="msg-head-right">
+            <button id="newMsgBtn" class="link-btn" type="button">+ New</button>
+            <span id="msgBadge" class="badge inline hidden">0</span>
+          </span>
+        </div>
+        <div id="chatList" class="chat-list"></div>
+        <p id="chatEmpty" class="muted small list-empty">No messages yet. Tap “+ New” and type someone's ID number.</p>
+      </div>
+
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">Recent receipts</p>
+          <button id="viewAllTx" class="link-btn" type="button">View All</button>
+        </div>
+        <div id="homeTxns"><p class="muted">Nothing yet. Your sent and received money will show up here.</p></div>
+      </div>
+    </section>
+
+    <!-- STOCKS (placeholder: the owner will give instructions later) -->
+    <section id="tab-stocks" class="tab">
+      <header class="page-top"><h2>Stocks</h2></header>
+      <p class="muted stocks-soon">Coming soon.</p>
+    </section>
+
+    <!-- ANALYTICS -->
+    <section id="tab-analytics" class="tab">
+      <header class="page-top"><h2>Analytics</h2></header>
+
+      <div class="list-card light">
+        <div class="chart-head"><b>Where it went</b><span class="muted small">this month</span></div>
+        <div class="donut-wrap">
+          <div class="donut">
+            <svg viewBox="0 0 100 100" id="donutSvg"></svg>
+            <div id="donutMid" class="donut-mid"><b id="donutTotal">$0</b><span>sent</span></div>
+          </div>
+          <div id="legend" class="legend"></div>
+        </div>
+      </div>
+
+      <div class="list-card light">
+        <div class="chart-head"><b>Last 7 days</b><span class="muted small">money out and in</span></div>
+        <div id="bars" class="bars"></div>
+        <div class="chart-key"><span><i style="background:#1E3A66"></i>Sent</span><span><i style="background:#7FB8F0"></i>Received</span></div>
+      </div>
+
+      <div class="list-card light">
+        <div class="chart-head"><b>By card</b><span class="muted small">this month</span></div>
+        <div id="cardBreakdown" class="breakdown"></div>
+      </div>
+    </section>
+
+    <!-- HISTORY -->
+    <section id="tab-history" class="tab">
+      <header class="page-top">
+        <h2>History</h2>
+        <button id="delAllBtn" class="link-btn danger" type="button">Delete all</button>
+      </header>
+
+      <div class="pills">
+        <button class="pill active" type="button" data-filter="all">All</button>
+        <button class="pill" type="button" data-filter="sent">Sent</button>
+        <button class="pill" type="button" data-filter="received">Received</button>
+        <button class="pill" type="button" data-filter="fees">Fees</button>
+      </div>
+
+      <div id="txnList" class="txn-list"></div>
+      <div id="txnEmpty" class="empty">
+        <p class="empty-title">No transactions yet.</p>
+        <p class="muted">Tap a receipt to see it or delete it.</p>
+      </div>
+      <p class="note">Receipts delete themselves after <span id="lifeHours">24</span> hours. Your charts stay.</p>
+    </section>
+
+    <!-- ACCOUNT -->
+    <section id="tab-account" class="tab">
+      <header class="page-top"><h2 id="accTitle">Account</h2></header>
+      <div class="soft-card info" style="margin-top:0">
+        <p class="label">Name</p>
+        <p id="accName" class="value">—</p>
+        <p class="label">Your ID number</p>
+        <div class="id-row">
+          <p id="accUser" class="value">—</p>
+          <button id="accCopy" class="copy" type="button">Copy</button>
+        </div>
+        <p class="label">Email (for logging in)</p>
+        <p id="accEmail" class="value">—</p>
+      </div>
+
+      <div class="soft-card toggle-row">
+        <div>
+          <p class="card-title">Require Face ID to show card numbers</p>
+          <p class="muted small">Your phone checks it before the numbers show. The PIN is used if the phone can't.</p>
+        </div>
+        <button id="faceToggle" class="switch" type="button" aria-pressed="false" aria-label="Require Face ID to show card numbers"><i></i></button>
+      </div>
+
+      <div id="ownerCard" class="soft-card owner-card hidden">
+        <p class="card-title">Owner tools</p>
+        <p id="ownerStatus" class="muted" style="margin:.3rem 0 .7rem"></p>
+        <button id="ownerBtn" class="secondary" type="button" style="margin-top:0">Set funding password</button>
+      </div>
+
+      <button id="logoutBtn" class="secondary" type="button">Log out</button>
+      <button id="deleteAccBtn" class="danger-btn" type="button">Delete account</button>
+    </section>
+
+    <!-- FLOATING TAB BAR -->
+    <nav class="tabbar">
+      <button class="tabbtn active" data-tab="home" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="tabbtn" data-tab="stocks" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5 9.5 11l3.5 3.5L20 7.5"/><path d="M15 7.5h5v5"/></svg>
+        <span>Stocks</span>
+      </button>
+      <button class="tabbtn" data-tab="analytics" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V12M12 20V5M19 20v-9"/></svg>
+        <span>Analytics</span>
+      </button>
+      <button class="tabbtn" data-tab="history" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+        <span>History</span>
+      </button>
+      <button class="tabbtn" data-tab="account" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+        <span>Account</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- FIRST-CARD STEP (covers the app until you have a card) -->
+  <div id="firstGate" class="first-gate hidden">
+    <div class="first-wrap">
+      <svg class="first-mark" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
+      <h1>Make your first card</h1>
+      <p class="muted">You need a card before you can send, add or pay. Pick a plan and a color. Plain is free, and the Daily plan is $4.99 a day.</p>
+      <button id="firstGateBtn" class="primary wide" type="button">Make my card</button>
+    </div>
+  </div>
+
+  <!-- Message thread (slides in over everything) -->
+  <div id="thread" class="thread hidden">
+    <header class="th-head">
+      <button id="thBack" class="th-back" type="button" aria-label="Back">‹</button>
+      <div id="thAv" class="q-av sm c1">?</div>
+      <div>
+        <p id="thName" class="th-name"></p>
+        <p id="thUser" class="muted small"></p>
+      </div>
+    </header>
+    <div id="msgList" class="msg-list"></div>
+    <form id="msgForm" class="msg-bar" autocomplete="off">
+      <input id="msgInput" aria-label="Message" type="text" placeholder="Message" maxlength="500" enterkeyhint="send" autocomplete="off" autocorrect="on">
+      <button id="msgSend" class="msg-send" type="submit">Send</button>
+    </form>
+  </div>
+
+  <!-- Notification banner (shows on every tab) -->
+  <div id="banner" class="banner" role="status">
+    <div id="bannerIc" class="b-ic">SB</div>
+    <div class="b-txt">
+      <p id="bannerTitle" class="b-title"></p>
+      <p id="bannerBody" class="b-body"></p>
+    </div>
+  </div>
+
+  <!-- Bottom sheet -->
+  <div id="sheetBack" class="sheet-back hidden"></div>
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <button id="sheetClose" class="sheet-close" type="button" aria-label="Close">&#10005;</button>
+
+    <div id="vSearch" class="view hidden">
+      <p id="searchTitle" class="sheet-title">Send money</p>
+      <p id="searchSub" class="sheet-sub">Type the 8-digit ID number of someone with an SB Wallet account.</p>
+      <input id="userInput" aria-label="ID number" class="sheet-input" type="text" inputmode="numeric" placeholder="8-digit ID number, like 4821 3907" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off">
+      <p id="searchError" class="sheet-error"></p>
+
+      <div class="contacts-box">
+        <p class="mini-label"><span>Your contacts</span></p>
+        <div id="contactList" class="contact-list"></div>
+        <p id="contactEmpty" class="muted small contact-empty">Save people you send money to, and they'll show up here.</p>
+      </div>
+
+      <div id="foundCard" class="found hidden">
+        <div id="foundAv" class="q-av sm c1">?</div>
+        <div><p id="foundName" class="who-name"></p><p id="foundUser" class="muted small"></p></div>
+        <span class="found-ok">Real account ✓</span>
+      </div>
+      <button id="saveContactBtn" class="secondary hidden" type="button">Save contact</button>
+      <button id="findBtn" class="primary wide" type="button">Find</button>
+    </div>
+
+    <div id="vAmount" class="view hidden">
+      <p id="amountTitle" class="sheet-title">Add money</p>
+      <p id="amountSub" class="sheet-sub">Fake money. Up to $5,000 each time.</p>
+      <div id="amountWho" class="who-row hidden">
+        <div id="whoAv" class="q-av sm c1">?</div>
+        <div><p id="whoName" class="who-name"></p><p id="whoUser" class="muted small"></p></div>
+      </div>
+      <div class="amount-box">
+        <p id="amountText" class="amount-text">$0</p>
+        <p id="feeLine" class="fee-line"></p>
+      </div>
+      <div id="padAmount" class="numpad"></div>
+      <button id="confirmFund" class="primary wide" type="button" disabled>Confirm Funding</button>
+    </div>
+
+    <div id="vPin" class="view hidden">
+      <p id="pinTitle" class="sheet-title">Enter 4-digit PIN</p>
+      <p id="pinSub" class="sheet-sub"></p>
+      <div id="pinDots" class="dots"><i></i><i></i><i></i><i></i></div>
+      <div id="padPin" class="numpad"></div>
+    </div>
+
+    <div id="vFundPw" class="view hidden">
+      <p class="sheet-title">Owner password</p>
+      <p id="fundPwSub" class="sheet-sub">Only the owner can add money. Type the funding password (not your login password).</p>
+      <input id="fundPwInput" aria-label="Funding password" class="sheet-input" type="password" placeholder="Funding password" autocomplete="off" autocapitalize="none" autocorrect="off">
+      <p id="fundPwError" class="sheet-error"></p>
+      <button id="fundPwBtn" class="primary wide" type="button">Add money</button>
+    </div>
+
+    <div id="vOwner" class="view hidden">
+      <p id="ownerTitle" class="sheet-title">Funding password</p>
+      <p id="ownerSub" class="sheet-sub">This is a second password just for adding money. Make it long and keep it secret.</p>
+      <input id="ownerOld" aria-label="Current funding password" class="sheet-input hidden" type="password" placeholder="Current funding password" autocomplete="off" autocapitalize="none">
+      <input id="ownerPw1" aria-label="New funding password" class="sheet-input" type="password" placeholder="New funding password (10+ characters)" autocomplete="off" autocapitalize="none">
+      <input id="ownerPw2" aria-label="Type the new funding password again" class="sheet-input" type="password" placeholder="Type it again" autocomplete="off" autocapitalize="none">
+      <p id="ownerError" class="sheet-error"></p>
+      <button id="ownerSave" class="primary wide" type="button">Save</button>
+    </div>
+
+    <div id="vBusy" class="view hidden">
+      <div id="statusIcon" class="status spin">
+        <svg viewBox="0 0 100 100">
+          <circle class="ring" cx="50" cy="50" r="40" fill="none" stroke-width="8" stroke-linecap="round"/>
+          <path class="tick" d="M30 52 L45 66 L71 36" fill="none" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p id="busyText" class="sheet-title center">Working…</p>
+      <p id="busyStep" class="busy-step"></p>
+      <button id="doneBtn" class="primary wide hidden" type="button">Done</button>
+    </div>
+
+    <div id="vReceipt" class="view hidden">
+      <p class="sheet-title">Receipt</p>
+      <div class="rc-top">
+        <div id="rcIc" class="txn-ic big">+</div>
+        <p id="rcAmt" class="rc-amt">$0.00</p>
+        <p id="rcTitle" class="muted"></p>
+      </div>
+      <div class="rc-rows">
+        <div class="rc-row"><span>Status</span><strong>Completed</strong></div>
+        <div class="rc-row"><span>Date</span><strong id="rcDate"></strong></div>
+        <div id="rcPersonRow" class="rc-row"><span id="rcPersonLabel">To</span><strong id="rcPerson"></strong></div>
+        <div id="rcSentRow" class="rc-row hidden"><span>Amount sent</span><strong id="rcSent"></strong></div>
+        <div id="rcFeeRow" class="rc-row hidden"><span>Fee</span><strong id="rcFee"></strong></div>
+        <div id="rcCardRow" class="rc-row hidden"><span>Card</span><strong id="rcCard"></strong></div>
+        <div class="rc-row"><span>Reference</span><strong id="rcRef"></strong></div>
+        <div class="rc-row"><span>Paid with</span><strong id="rcPaid">SB Wallet balance</strong></div>
+      </div>
+      <button id="rcMsgBtn" class="secondary hidden" type="button">Message this person</button>
+      <button id="rcSaveBtn" class="secondary hidden" type="button">Save contact</button>
+      <button id="rcReportBtn" class="secondary" type="button">Report a problem</button>
+      <button id="rcDelBtn" class="danger-btn" type="button">Delete receipt</button>
+      <button id="rcClose" class="primary wide" type="button" style="margin-top:.6rem">Close</button>
+    </div>
+
+    <div id="vReport" class="view hidden">
+      <p class="sheet-title">Report a problem</p>
+      <p class="sheet-sub">Tell us what looks wrong with this receipt. An owner will look at it.</p>
+      <input id="reportNote" aria-label="What is wrong" class="sheet-input" type="text" placeholder="What looks wrong?" maxlength="200" autocomplete="off">
+      <p id="reportError" class="sheet-error"></p>
+      <button id="reportSend" class="primary wide" type="button">Send report</button>
+    </div>
+
+    <div id="vCardNew" class="view hidden">
+      <p id="newTitle" class="sheet-title">New SB Card</p>
+      <div id="newPreview" style="margin-top:.9rem"></div>
+      <p class="mini-label"><span>Plan</span><span id="planNote" class="plan-note"></span></p>
+      <div id="planGrid" class="plan-grid"></div>
+      <p class="mini-label"><span>Pick a color</span><span id="priceNote">Free</span></p>
+      <div id="finGrid" class="fin-grid"></div>
+      <input id="cardNick" aria-label="Card name" class="sheet-input" type="text" placeholder="Card name (optional)" maxlength="20" autocomplete="off">
+      <button id="issueBtn" class="primary wide" type="button" style="margin-top:.8rem">Issue Card Now</button>
+    </div>
+
+    <div id="vCards" class="view hidden">
+      <p class="sheet-title">My cards</p>
+      <p class="sheet-sub">Tap a card to manage it. You can have up to 5.</p>
+      <div id="cardsSheetList" class="cards-sheet-list" style="margin-top:.7rem"></div>
+      <button id="freezeAllBtn" class="secondary" type="button">Freeze all cards</button>
+      <button id="newCardFromSheet" class="primary wide" type="button" style="margin-top:.6rem">+ New card</button>
+    </div>
+
+    <div id="vCard" class="view hidden">
+      <p id="cvName" class="sheet-title">Card</p>
+      <div id="cvCard" style="margin-top:.9rem"></div>
+      <p id="cvStatus" class="card-status"></p>
+      <div id="cvPayBox" class="pay-box hidden">
+        <div class="pay-info">
+          <p id="cvPayText" class="pay-text"></p>
+          <p class="ctl-help">Pays the unpaid days and today's fee, so the card unlocks.</p>
+        </div>
+        <button id="cvPay" class="primary" type="button">Pay</button>
+      </div>
+      <div class="timer-line"><i id="cvTimer"></i></div>
+
+      <div class="ctl-list">
+        <div class="ctl-row">
+          <button id="cvReveal" class="chip ctl-btn" type="button">Show number</button>
+          <p class="ctl-help">Shows the full card number and CVV for 10 seconds.</p>
+        </div>
+        <div class="ctl-row">
+          <button id="cvFlip" class="chip ctl-btn" type="button">Turn card over</button>
+          <p class="ctl-help">Shows the back of the card.</p>
+        </div>
+        <div class="ctl-row">
+          <button id="cvFreeze" class="chip ctl-btn" type="button">Freeze card</button>
+          <p class="ctl-help">Stops all payments from this card until you unfreeze it.</p>
+        </div>
+      </div>
+
+      <button id="cvUse" class="primary wide" type="button" style="margin-top:1rem">Use this card</button>
+      <p class="ctl-help center">Payments use this card unless you pick another.</p>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Daily limit</span><span id="cvLimitNow" class="muted"></span></p>
+        <div class="inline-row">
+          <input id="cvLimitInput" aria-label="Daily limit in dollars" class="sheet-input" type="number" inputmode="decimal" min="0" placeholder="0 = no limit">
+          <button id="cvLimitBtn" class="chip" type="button">Save</button>
+        </div>
+        <p class="ctl-help">The most this card can spend in one day. 0 means no limit.</p>
+      </div>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Only pay this person</span><span id="cvLockNow" class="muted"></span></p>
+        <div class="inline-row">
+          <input id="cvLockInput" aria-label="ID number this card can pay" class="sheet-input" type="text" inputmode="numeric" placeholder="8-digit ID number">
+          <button id="cvLockBtn" class="chip" type="button">Save</button>
+        </div>
+        <p class="ctl-help">Restrict this card so it can only pay one account. Leave empty to allow anyone.</p>
+      </div>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Card name</span></p>
+        <div class="inline-row">
+          <input id="cvRename" aria-label="New card name" class="sheet-input" type="text" placeholder="New name" maxlength="20" autocomplete="off">
+          <button id="cvRenameBtn" class="chip" type="button">Save</button>
+        </div>
+        <p class="ctl-help">Changes the name shown on this card.</p>
+      </div>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Color</span><span class="muted">Colors you own switch for free.</span></p>
+        <div id="cvColors" class="fin-grid small-grid"></div>
+        <p class="ctl-help">Tap a color to switch to it. A color you don't own costs $2 (free for the owner).</p>
+      </div>
+
+      <div class="cv-block">
+        <div class="tg-row">
+          <p class="tg-title">Single-use card</p>
+          <button id="cvSingle" class="switch" type="button" role="switch" aria-checked="false" aria-label="Single-use card"><i></i></button>
+        </div>
+        <p class="ctl-help">The card freezes itself after one payment.</p>
+      </div>
+
+      <div class="cv-block">
+        <div class="ctl-row">
+          <button id="cvReissue" class="chip ctl-btn" type="button">Reissue number</button>
+          <p class="ctl-help">Gives the card a new number and CVV. The old numbers stop working.</p>
+        </div>
+        <p id="cvReissueNow" class="muted small ctl-date hidden"></p>
+      </div>
+
+      <div class="cv-block">
+        <button id="cvDelete" class="danger-btn" type="button" style="margin-top:0">Delete card</button>
+        <p class="ctl-help center">Removes this card. Past payments stay in History.</p>
+      </div>
+    </div>
+
+    <div id="vScan" class="view hidden">
+      <p class="sheet-title">Scan</p>
+      <p class="sheet-sub">Show your ID code, or scan someone else's.</p>
+
+      <div class="list-card center-card">
+        <p class="card-title">Your ID number</p>
+        <p class="muted small">Let someone scan this to send you money.</p>
+        <div id="qrBox" class="qr-box"></div>
+        <p id="myIdText" class="handle">—</p>
+        <button id="scanCopy" class="copy" type="button">Copy</button>
+      </div>
+
+      <div class="list-card center-card">
+        <p class="card-title">Scan a code</p>
+        <p class="muted small">Point the camera at someone's SB Wallet code.</p>
+        <div class="scan-frame">
+          <video id="scanVideo" playsinline muted></video>
+          <canvas id="scanCanvas" hidden></canvas>
+        </div>
+        <p id="scanMsg" class="muted small scan-msg"></p>
+        <button id="scanStart" class="primary wide" type="button">Open camera</button>
+      </div>
+    </div>
+
+    <div id="vNotifs" class="view hidden">
+      <p class="sheet-title">Notifications</p>
+      <div id="notifList" style="margin-top:.6rem"></div>
+      <div id="notifEmpty" class="empty"><p class="empty-title">All quiet.</p><p class="muted">Money in, money out and new messages show up here.</p></div>
+    </div>
+
+    <div id="vDelete" class="view hidden">
+      <p class="sheet-title">Delete account?</p>
+      <p class="sheet-sub bad" style="min-height:0">This deletes your login, balance, cards, username and receipts. It can't be undone.</p>
+      <input id="delPassword" aria-label="Password" class="sheet-input" type="password" placeholder="Type your password" autocomplete="current-password" autocapitalize="none">
+      <p id="delError" class="sheet-error"></p>
+      <button id="delBtn" class="danger-btn" type="button" style="margin-top:0">Delete my account</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Firebase (classic scripts, no modules) -->
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <!-- QR code maker and reader (for the Scan tab) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+  <script src="logo-data.js"></script>
+  <script src="wallet.js"></script>
+  <script src="app.js"></script>
+  <script src="cards.js"></script>
+  <script src="chat.js"></script>
+  <script src="screens.js"></script>
+</body>
+</html>
