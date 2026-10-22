@@ -94,8 +94,8 @@ window.SBRules = (function () {
   // Every new account starts with this much FAKE money
   var STARTING_BALANCE = 100;
 
-  // Every fee is paid to this account (looked up by its username)
-  var FEE_OWNER_USERNAME = "mohamed#9729";
+  // Every fee, card payment and color purchase is paid to this account (looked up by its ID number)
+  var FEE_OWNER_ID = "90814079";
 
   function round2(n) { return Math.round(n * 100) / 100; }
   function fullName(p) { return ((p.firstName || "") + " " + (p.lastName || "")).trim(); }
@@ -227,7 +227,7 @@ window.SBRules = (function () {
   // The account that receives every fee (null if it can't be found, which turns fees off)
   async function feeOwner() {
     try {
-      var snap = await db.collection("usernames").doc(FEE_OWNER_USERNAME).get();
+      var snap = await db.collection("ids").doc(FEE_OWNER_ID).get();
       return snap.exists ? snap.data().uid : null;
     } catch (e) {
       return null;
@@ -875,8 +875,211 @@ window.SBRules = (function () {
     return map[err.code] || err.message || "Something went wrong. Try again.";
   }
 
+  // ---------- Stocks: 5 made-up stocks ----------
+  // Prices move while the app is open (once a minute, shared by everyone watching).
+  // When nobody is in the app, nothing moves. The next person to open it gets caught up.
+  var STOCK_TICK_MS = 60 * 1000;   // one normal price move per minute
+  var STOCK_MAX_CATCHUP = 240;     // at most 4 hours of moves are added when you open the app
+  var STOCK_SPREAD = 0.02;         // you buy 2% above the price and sell 2% below it
+  var STOCK_HISTORY = 480;         // how many points the chart keeps
+  var STOCK_SHARES = 100000;       // total shares in each company. Company value = price x shares
+  // drift = the stock's usual direction each minute (some stocks do better than others)
+  // vol   = how wild it is each minute (higher = bumpier)
+  var STOCK_SEED = [
+    { id: "NVLB", name: "Nova Labs",      price: 10, base: 10, drift: 0.00020,  vol: 0.0015 },
+    { id: "BFEN", name: "Bluefin Energy", price: 10, base: 10, drift: 0.00005,  vol: 0.0010 },
+    { id: "ZNTH", name: "Zenith Motors",  price: 10, base: 10, drift: 0.00000,  vol: 0.0020 },
+    { id: "KLPF", name: "Kelp Foods",     price: 10, base: 10, drift: -0.00010, vol: 0.0012 },
+    { id: "TDAL", name: "Tidal Air",      price: 10, base: 10, drift: -0.00015, vol: 0.0014 }
+  ];
+
+  function round4(n) { return Math.round(n * 10000) / 10000; }
+  function stockBuyPrice(p) { return p * (1 + STOCK_SPREAD); }
+  function stockSellPrice(p) { return p * (1 - STOCK_SPREAD); }
+  // A trade moves the price by about half its size compared to the whole company's value.
+  // So $3,000 into a $1,000,000 company moves the price about 0.15%, and $200,000 moves it about 10%.
+  function tradeImpact(amount, price) {
+    var companyValue = price * STOCK_SHARES;
+    return Math.min(0.25, 0.5 * amount / companyValue);
+  }
+
+  // Creates any missing stock (only the first person to open the app does this)
+  async function ensureStocks() {
+    for (var i = 0; i < STOCK_SEED.length; i++) {
+      var s = STOCK_SEED[i];
+      var ref = db.collection("stocks").doc(s.id);
+      await db.runTransaction(async function (tx) {
+        var snap = await tx.get(ref);
+        if (snap.exists) return;
+        tx.set(ref, {
+          name: s.name, price: s.price, base: s.base, drift: s.drift, vol: s.vol,
+          hist: [s.price], lastTick: Date.now()
+        });
+      });
+    }
+  }
+
+  // One price move, random but pulled gently back toward the starting price
+  function nextPrice(p, base, drift, vol) {
+    var noise = (Math.random() * 2 - 1) * vol;
+    var pull = ((base - p) / base) * 0.0002; // weak pull back to the start, so good stocks can keep growing
+    var move = Math.max(-0.015, Math.min(0.015, drift + noise + pull));
+    return Math.max(0.5, p * (1 + move));
+  }
+
+  // Adds the missed moves to each stock (catch-up). Safe to run from many phones at once.
+  function tickOne(ref) {
+    return db.runTransaction(async function (tx) {
+      var snap = await tx.get(ref);
+      if (!snap.exists) return;
+      var d = snap.data();
+      var now = Date.now();
+      var last = d.lastTick || now;
+      var steps = Math.min(STOCK_MAX_CATCHUP, Math.floor((now - last) / STOCK_TICK_MS));
+      if (steps < 1) return;
+      var p = d.price;
+      var hist = (d.hist || []).slice();
+      for (var i = 0; i < steps; i++) {
+        p = nextPrice(p, d.base, d.drift, d.vol);
+        hist.push(round4(p));
+      }
+      if (hist.length > STOCK_HISTORY) hist = hist.slice(-STOCK_HISTORY);
+      tx.update(ref, { price: round4(p), hist: hist, lastTick: last + steps * STOCK_TICK_MS });
+    });
+  }
+  async function tickStocks() {
+    await Promise.all(STOCK_SEED.map(function (s) {
+      return tickOne(db.collection("stocks").doc(s.id));
+    }));
+  }
+
+  function watchStocks(callback) {
+    return db.collection("stocks").onSnapshot(function (snap) {
+      var docs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+      docs.sort(function (a, b) {
+        return STOCK_SEED.findIndex(function (s) { return s.id === a.id; }) -
+               STOCK_SEED.findIndex(function (s) { return s.id === b.id; });
+      });
+      callback(docs);
+    }, function (err) { console.error(err); });
+  }
+
+  // Your shares: { NVLB: { shares, cost }, ... }
+  function watchHoldings(uid, callback) {
+    return userRef(uid).collection("holdings").onSnapshot(function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+      callback(map);
+    }, function (err) { console.error(err); });
+  }
+
+  // Buy: spend `amount` (the fee is paid on top). Moves the price up a little.
+  async function buyStock(uid, symbol, amount, fee, ownerUid) {
+    amount = round2(amount);
+    fee = round2(fee || 0);
+    if (!ownerUid || ownerUid === uid) fee = 0;
+    var total = round2(amount + fee);
+    var uRef = userRef(uid);
+    var sRef = db.collection("stocks").doc(symbol);
+    var hRef = uRef.collection("holdings").doc(symbol);
+    var oRef = fee > 0 ? userRef(ownerUid) : null;
+    var txRef = uRef.collection("transactions").doc();
+    var oTx = oRef ? oRef.collection("transactions").doc() : null;
+    var feesRef = db.collection("config").doc("fees");
+    var ref = makeRef();
+
+    await db.runTransaction(async function (tx) {
+      var uSnap = await tx.get(uRef);
+      var sSnap = await tx.get(sRef);
+      var hSnap = await tx.get(hRef);
+      var oSnap = oRef ? await tx.get(oRef) : null;
+      if (!uSnap.exists) throw new Error("Your account wasn't found.");
+      if (!sSnap.exists) throw new Error("That stock isn't available right now.");
+      if (fee > 0 && !oSnap.exists) throw new Error("The fee account isn't set up yet.");
+
+      var u = uSnap.data();
+      if ((u.balance || 0) < total) throw new Error("You don't have enough money for that.");
+      var s = sSnap.data();
+      var buyAt = stockBuyPrice(s.price);
+      var shares = amount / buyAt;
+      var h = hSnap.exists ? hSnap.data() : { shares: 0, cost: 0 };
+      var newPrice = s.price * (1 + tradeImpact(amount, s.price));
+      var hist = (s.hist || []).concat([round4(newPrice)]).slice(-STOCK_HISTORY);
+
+      tx.update(uRef, { balance: round2((u.balance || 0) - total) });
+      if (oRef) {
+        tx.update(oRef, { balance: round2((oSnap.data().balance || 0) + fee) });
+        tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
+        tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
+      }
+      tx.set(hRef, { shares: round4((h.shares || 0) + shares), cost: round2((h.cost || 0) + total) });
+      tx.update(sRef, { price: round4(newPrice), hist: hist });
+      tx.set(txRef, {
+        type: "stock_buy", title: "Bought " + s.name, amount: -total, fee: fee,
+        symbol: symbol, shares: round4(shares), pricePer: round4(buyAt), ref: ref, createdAt: stamp()
+      });
+    });
+    return ref;
+  }
+
+  // Sell: `amount` is the dollar value you sell at the sell price. The fee comes out of what you get.
+  async function sellStock(uid, symbol, amount, fee, ownerUid) {
+    amount = round2(amount);
+    fee = round2(fee || 0);
+    if (!ownerUid || ownerUid === uid) fee = 0;
+    var receive = round2(amount - fee);
+    var uRef = userRef(uid);
+    var sRef = db.collection("stocks").doc(symbol);
+    var hRef = uRef.collection("holdings").doc(symbol);
+    var oRef = fee > 0 ? userRef(ownerUid) : null;
+    var txRef = uRef.collection("transactions").doc();
+    var oTx = oRef ? oRef.collection("transactions").doc() : null;
+    var feesRef = db.collection("config").doc("fees");
+    var ref = makeRef();
+
+    await db.runTransaction(async function (tx) {
+      var uSnap = await tx.get(uRef);
+      var sSnap = await tx.get(sRef);
+      var hSnap = await tx.get(hRef);
+      var oSnap = oRef ? await tx.get(oRef) : null;
+      if (!uSnap.exists) throw new Error("Your account wasn't found.");
+      if (!sSnap.exists) throw new Error("That stock isn't available right now.");
+      if (fee > 0 && !oSnap.exists) throw new Error("The fee account isn't set up yet.");
+      if (!hSnap.exists || !(hSnap.data().shares > 0)) throw new Error("You don't own any of this stock.");
+
+      var u = uSnap.data();
+      var s = sSnap.data();
+      var h = hSnap.data();
+      var sellAt = stockSellPrice(s.price);
+      var sharesSold = amount / sellAt;
+      if (sharesSold > h.shares + 0.000001) throw new Error("You don't have that many shares to sell.");
+
+      var newShares = Math.max(0, h.shares - sharesSold);
+      var costLeft = round2(h.cost * (newShares / h.shares));
+      var newPrice = Math.max(0.5, s.price * (1 - tradeImpact(amount, s.price)));
+      var hist = (s.hist || []).concat([round4(newPrice)]).slice(-STOCK_HISTORY);
+
+      tx.update(uRef, { balance: round2((u.balance || 0) + receive) });
+      if (oRef) {
+        tx.update(oRef, { balance: round2((oSnap.data().balance || 0) + fee) });
+        tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
+        tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
+      }
+      tx.set(hRef, { shares: round4(newShares), cost: costLeft });
+      tx.update(sRef, { price: round4(newPrice), hist: hist });
+      tx.set(txRef, {
+        type: "stock_sell", title: "Sold " + s.name, amount: receive, fee: fee,
+        symbol: symbol, shares: round4(sharesSold), pricePer: round4(sellAt), ref: ref, createdAt: stamp()
+      });
+    });
+    return ref;
+  }
+
   window.Wallet = {
     prices: { daily: DAILY_FEE, forever: FOREVER_PRICE, color: COLOR_PRICE },
+    stockList: STOCK_SEED, stockShares: STOCK_SHARES, stockTickMs: STOCK_TICK_MS, stockBuyPrice: stockBuyPrice, stockSellPrice: stockSellPrice,
+    ensureStocks: ensureStocks, tickStocks: tickStocks, watchStocks: watchStocks, watchHoldings: watchHoldings,
+    buyStock: buyStock, sellStock: sellStock,
     ownsFinish: ownsFinish, settleCards: settleCards, payCardToday: payCardToday,
     buyColor: buyColor, setCardFinish: setCardFinish, setCardLimit: setCardLimit, setLockTo: setLockTo, setSingleUse: setSingleUse,
     renameCard: renameCard, reissueCard: reissueCard, freezeAllCards: freezeAllCards, createDispute: createDispute,

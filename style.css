@@ -782,3 +782,27 @@ button.card-row + button.card-row { border-top: 1px solid var(--line); }
 .donut-mid { padding: 0 0.25rem; }
 .donut-mid b { font-size: 1rem; white-space: nowrap; }
 .donut-mid.long b { font-size: 0.8rem; }
+
+/* ---------- Stocks ---------- */
+.stk-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.4rem; }
+.stk-row { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; width: 100%; padding: 0.9rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 1.1rem; text-align: left; }
+.stk-left, .stk-right { min-width: 0; }
+.stk-right { text-align: right; flex-shrink: 0; }
+.stk-name { font-weight: 800; font-size: 1rem; margin: 0; }
+.stk-sym { color: var(--muted); font-size: 0.8rem; margin: 0.15rem 0 0; }
+.stk-px { font-weight: 800; font-size: 1.05rem; margin: 0; }
+.stk-chg { font-size: 0.82rem; font-weight: 700; margin: 0.15rem 0 0; }
+.stk-chg.up, .stk-change.up { color: #3DF0B0; }
+.stk-chg.down, .stk-change.down { color: #FF6B7A; }
+.stk-note { margin-top: 0.8rem; }
+.stk-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin-top: 0.4rem; }
+.stk-price { font-size: 1.9rem; font-weight: 800; margin: 0; }
+.stk-change { font-size: 0.85rem; font-weight: 700; margin: 0; }
+.stk-chart { height: 7.5rem; margin: 0.6rem 0 0.2rem; }
+.stk-svg { width: 100%; height: 100%; display: block; }
+.stk-hold { margin: 0.4rem 0 0; }
+.stk-btns { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
+.stk-btns button { flex: 1; margin-top: 0; }
+.stk-tip { margin-top: 0.8rem; }
+#stkHoldings { margin-top: 0.4rem; }
+#stkHoldings .sec-title { margin-bottom: 0.4rem; }

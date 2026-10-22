@@ -11,6 +11,8 @@
   <link rel="apple-touch-icon" id="touchIcon">
   <title>SB Wallet</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="stocks.css">
+  <link rel="stylesheet" href="polish.css">
 </head>
 <body>
   <noscript><style>#splash{display:none}</style><p style="padding:2rem;text-align:center;color:#8794A8">SB Wallet needs JavaScript. Turn it on in your browser settings, then reload.</p></noscript>
@@ -41,7 +43,6 @@
   <div id="splash" class="splash">
     <div id="splashMoney" class="money-bg"></div>
     <img id="splashLogo" class="splash-logo" alt="SuperBase Wallet" hidden>
-    <svg id="splashFallback" class="logo splash-fallback" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
     <p id="splashMsg" class="splash-msg"></p>
   </div>
 
@@ -50,7 +51,6 @@
     <div id="authMoney" class="money-bg faint"></div>
     <div class="auth-wrap">
       <img id="markImg" class="logo small mark-img" alt="SB" hidden>
-      <svg id="markFallback" class="logo small" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
       <h1 id="authTitle">Welcome to SB Wallet</h1>
       <p class="muted" id="authSub">Make your account to get started.</p>
 
@@ -89,7 +89,6 @@
       <header class="brand-row">
         <div class="brand">
           <img id="brandImg" class="brand-img" alt="" hidden>
-          <svg id="brandFallback" class="brand-mark" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
           <span class="brand-name">SB Wallet</span>
         </div>
         <div class="round-btns">
@@ -177,7 +176,10 @@
     <!-- STOCKS (placeholder: the owner will give instructions later) -->
     <section id="tab-stocks" class="tab">
       <header class="page-top"><h2>Stocks</h2></header>
-      <p class="muted stocks-soon">Coming soon.</p>
+      <div id="stkHoldings" class="hidden"></div>
+      <p class="sec-title">All stocks</p>
+      <div id="stkList" class="stk-list"></div>
+      <p class="muted small stk-note">Prices move a little each day, and more when people buy and sell. Tap a stock to buy or sell.</p>
     </section>
 
     <!-- ANALYTICS -->
@@ -389,6 +391,58 @@
       <button id="ownerSave" class="primary wide" type="button">Save</button>
     </div>
 
+    <div id="vStock" class="view hidden">
+      <div class="sp-head">
+        <p id="stkName" class="sp-name">Stock</p>
+        <span id="stkSym" class="sp-sym">NVLB</span>
+      </div>
+
+      <div class="sp-hero">
+        <p id="stkPrice" class="sp-price">$0.00</p>
+        <p id="stkChange" class="sp-change up">+0.00%</p>
+        <span class="sp-live"><i></i>LIVE</span>
+      </div>
+
+      <div id="stkRange" class="sp-range">
+        <button type="button" data-range="1H" class="active">1H</button>
+        <button type="button" data-range="4H">4H</button>
+        <button type="button" data-range="All">All</button>
+      </div>
+
+      <div id="stkChartCard" class="sp-chart-card">
+        <p id="stkReadout" class="sp-readout">Touch the chart to see past prices.</p>
+        <div id="stkChart"></div>
+      </div>
+      <p id="stkUpdated" class="sp-updated"></p>
+
+      <div class="sp-stats">
+        <div class="sp-stat"><p class="k">Open</p><p id="stkOpen" class="v">$0.00</p></div>
+        <div class="sp-stat"><p class="k">High</p><p id="stkHigh" class="v">$0.00</p></div>
+        <div class="sp-stat"><p class="k">Low</p><p id="stkLow" class="v">$0.00</p></div>
+      </div>
+
+      <div class="sp-card">
+        <h3>Your position</h3>
+        <div id="stkPos"></div>
+      </div>
+
+      <div class="sp-card">
+        <h3>The whole company</h3>
+        <div id="stkCompany"></div>
+      </div>
+
+      <div class="sp-actions">
+        <button id="stkBuy" class="primary" type="button">Buy</button>
+        <button id="stkSell" class="secondary" type="button">Sell</button>
+      </div>
+      <p class="sp-note">You buy a little above the price and sell a little below it. A 1.5% trade fee (minimum $0.25, maximum $5) applies to buys and sells.</p>
+
+      <div class="sp-trades">
+        <h3>Your trades in this stock</h3>
+        <div id="stkTrades"></div>
+      </div>
+    </div>
+
     <div id="vBusy" class="view hidden">
       <div id="statusIcon" class="status spin">
         <svg viewBox="0 0 100 100">
@@ -592,5 +646,7 @@
   <script src="cards.js"></script>
   <script src="chat.js"></script>
   <script src="screens.js"></script>
+  <script src="market.js"></script>
+  <script src="stocks.js"></script>
 </body>
 </html>

@@ -599,7 +599,7 @@
   var personResolve = null;
   var funding = false; // true while a Fund / Send / card step is in progress
 
-  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vCards", "vNotifs", "vDelete", "vFundPw", "vOwner", "vReport", "vScan"];
+  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vCards", "vNotifs", "vDelete", "vFundPw", "vOwner", "vReport", "vScan", "vStock"];
   var HIGH = ["vSearch", "vDelete", "vCardNew", "vFundPw", "vOwner", "vReport"]; // these have typing, so they sit high (keyboard won't cover them)
 
   var sheetToken = 0;
@@ -627,6 +627,7 @@
     VIEWS.forEach(function (v) { $(v).classList.toggle("hidden", v !== name); });
     $("sheetClose").classList.toggle("hidden", name === "vBusy");
     $("sheet").classList.toggle("high", HIGH.indexOf(name) !== -1);
+    $("sheet").classList.toggle("full", name === "vStock"); // the stock page takes the whole screen
     $("sheet").classList.remove("hidden", "leaving");
     $("sheetBack").classList.remove("hidden", "leaving");
     SB.emit("view", name);
@@ -941,7 +942,7 @@
     else animateBalance(latestBalance); // count to the new balance
   });
 
-  SB.needPin = needPin; SB.pinGate = pinGate; SB.flow = flow; SB.runBusy = runBusy;
+  SB.needPin = needPin; SB.pinGate = pinGate; SB.flow = flow; SB.runBusy = runBusy; SB.askAmount = askAmount;
 
   // The card being used (cards.js decides which), or nothing
   function cardInfo() {
@@ -1972,7 +1973,6 @@
     var img = $("splashLogo");
     img.onload = function () {
       img.hidden = false;
-      $("splashFallback").style.display = "none";
       try {
         var W = img.naturalWidth, H = img.naturalHeight;
         // the mark is the top-middle part of the picture
@@ -1982,11 +1982,9 @@
         c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
         $("markImg").src = c.toDataURL("image/png");
         $("markImg").hidden = false;
-        $("markFallback").style.display = "none";
         // the same mark in the brand row at the top of Home
         $("brandImg").src = $("markImg").src;
         $("brandImg").hidden = false;
-        $("brandFallback").style.display = "none";
 
         // home screen icon: the mark on a dark background
         var ic = document.createElement("canvas");

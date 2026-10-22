@@ -1,0 +1,72 @@
+/* stocks.css: the full-screen stock page (chart, stats, your position, trades). */
+
+/* The sheet becomes a full screen page for a stock */
+.sheet.full {
+  top: 0; bottom: 0; left: 0; right: 0;
+  max-width: none; max-height: none;
+  border-radius: 0;
+  padding: calc(1.1rem + env(safe-area-inset-top, 0px)) 1.1rem calc(2rem + env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgba(60, 140, 255, 0.28), transparent 60%),
+    linear-gradient(180deg, #0B1A2E 0%, #060D18 100%);
+}
+.sheet.full .sheet-close { top: calc(1rem + env(safe-area-inset-top, 0px)); right: 1rem; }
+
+.sp-head { padding-right: 3.2rem; }
+.sp-name { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+.sp-sym { display: inline-block; margin-top: 0.35rem; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; color: #9FD8FF; background: rgba(159, 216, 255, 0.12); }
+
+.sp-hero { margin-top: 1.1rem; }
+.sp-price { font-size: 2.7rem; font-weight: 800; letter-spacing: -0.035em; line-height: 1; margin: 0; font-variant-numeric: tabular-nums; }
+.sp-change { display: inline-flex; align-items: center; gap: 0.45rem; margin-top: 0.6rem; padding: 0.3rem 0.7rem; border-radius: 999px; font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.sp-change.up { color: #3DF0B0; background: rgba(61, 240, 176, 0.13); }
+.sp-change.down { color: #FF6B7A; background: rgba(255, 107, 122, 0.13); }
+.sp-change span { opacity: 0.75; font-weight: 600; }
+
+.sp-live { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: 0.6rem; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; color: #cfe9ff; }
+.sp-live i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #3DF0B0; box-shadow: 0 0 0 0 rgba(61, 240, 176, 0.7); animation: spLive 1.6s ease-out infinite; }
+@keyframes spLive { 0% { box-shadow: 0 0 0 0 rgba(61, 240, 176, 0.7); } 100% { box-shadow: 0 0 0 0.6rem rgba(61, 240, 176, 0); } }
+
+.sp-range { display: flex; gap: 0.25rem; margin-top: 1.2rem; padding: 0.25rem; border-radius: 999px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.07); }
+.sp-range button { flex: 1; margin: 0; padding: 0.5rem 0; border: 0; border-radius: 999px; background: transparent; color: #8794A8; font-weight: 700; font-size: 0.85rem; }
+.sp-range button.active { color: #fff; background: linear-gradient(135deg, #3B7BFF, #7B5CFF); box-shadow: 0 0.3rem 1rem rgba(59, 123, 255, 0.35); }
+
+.sp-chart-card { position: relative; margin-top: 0.8rem; padding: 0.6rem 0.4rem 0.2rem; border-radius: 1.4rem; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.07); touch-action: none; }
+.sp-readout { min-height: 1.3rem; padding: 0 0.6rem; font-size: 0.82rem; color: #8794A8; font-variant-numeric: tabular-nums; }
+.sp-readout b { color: #fff; font-weight: 800; }
+.sp-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.sp-grid { stroke: rgba(255, 255, 255, 0.08); stroke-width: 1; stroke-dasharray: 3 4; }
+.sp-axis { fill: #6E7C92; font-size: 9px; font-weight: 600; }
+.sp-cross { stroke: rgba(255, 255, 255, 0.35); stroke-width: 1; stroke-dasharray: 2 3; }
+.sp-pulse { transform-box: fill-box; transform-origin: center; animation: spPulse 1.6s ease-out infinite; }
+@keyframes spPulse { 0% { transform: scale(0.6); opacity: 0.7; } 100% { transform: scale(2.2); opacity: 0; } }
+
+.sp-updated { margin: 0.6rem 0 0; text-align: center; font-size: 0.78rem; color: #6E7C92; }
+
+.sp-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-top: 1rem; }
+.sp-stat { padding: 0.75rem 0.8rem; border-radius: 1.1rem; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.07); }
+.sp-stat p { margin: 0; }
+.sp-stat .k { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #6E7C92; }
+.sp-stat .v { margin-top: 0.3rem; font-weight: 800; font-size: 0.98rem; font-variant-numeric: tabular-nums; }
+
+.sp-card { margin-top: 1rem; padding: 1rem 1.05rem; border-radius: 1.3rem; background: linear-gradient(160deg, rgba(40, 90, 170, 0.28), rgba(255, 255, 255, 0.03)); border: 1px solid rgba(255, 255, 255, 0.1); }
+.sp-card h3 { margin: 0 0 0.6rem; font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: #8FA7C6; font-weight: 800; }
+.sp-card-row { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.35rem 0; font-size: 0.92rem; }
+.sp-card-row span:first-child { color: #8794A8; }
+.sp-card-row span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.sp-card-row.total { margin-top: 0.3rem; padding-top: 0.6rem; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.sp-card p.none { margin: 0; color: #8794A8; font-size: 0.92rem; }
+
+.sp-actions { display: flex; gap: 0.6rem; margin-top: 1rem; }
+.sp-actions button { flex: 1; margin-top: 0; padding: 0.95rem 0; border-radius: 1.1rem; font-weight: 800; font-size: 1rem; }
+.sp-actions button:disabled { opacity: 0.45; }
+
+.sp-note { margin: 0.8rem 0 0; font-size: 0.8rem; color: #6E7C92; line-height: 1.45; }
+
+.sp-trades { margin-top: 1.3rem; }
+.sp-trades h3 { margin: 0 0 0.5rem; font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: #8FA7C6; font-weight: 800; }
+.sp-trade { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; padding: 0.7rem 0.2rem; border: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); background: transparent; color: var(--ink, #fff); text-align: left; }
+.sp-trade p { margin: 0; }
+.sp-trade .t { font-weight: 700; font-size: 0.92rem; }
+.sp-trade .d { font-size: 0.76rem; color: #6E7C92; margin-top: 0.15rem; }
+.sp-trade .a { font-weight: 800; font-size: 0.92rem; font-variant-numeric: tabular-nums; text-align: right; }
