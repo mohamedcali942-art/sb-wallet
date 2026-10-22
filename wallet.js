@@ -1,6 +1,67 @@
 // wallet.js — SB Wallet: talks to Firebase (accounts, ID numbers, money, fees, requests, cards, messages).
 // FAKE money only. Uses the "compat" Firebase scripts loaded in index.html.
 
+// Pure card rules (no Firebase in here, so they can be checked in node). Used by wallet.js and app.js.
+window.SBRules = (function () {
+  var DAILY_FEE = 4.99;
+
+  function round2(n) { return Math.round(n * 100) / 100; }
+  function keyOf(d) {
+    return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+  }
+  function todayKey() { return keyOf(new Date()); }
+  // Whole days from one YYYY-MM-DD key to another
+  function dayDiff(from, to) {
+    return Math.round((new Date(to + "T00:00:00") - new Date(from + "T00:00:00")) / 86400000);
+  }
+  // Days strictly between accountedDay and today (today and accountedDay themselves do not count)
+  function missedDays(accountedDay, today) {
+    if (!accountedDay || !today || accountedDay >= today) return 0;
+    return Math.max(0, dayDiff(accountedDay, today) - 1);
+  }
+  // Reads the debt fields. Cards made before v3 used activeDay, lastCollected and debt.
+  function cardState(c) {
+    c = c || {};
+    return {
+      paidDay: c.paidDay || c.activeDay || "",
+      accountedDay: c.accountedDay || c.lastCollected || "",
+      owed: round2(typeof c.owed === "number" ? c.owed : (c.debt || 0))
+    };
+  }
+  // Unpaid days so far, including days that have not been counted yet
+  function settledOwed(c, today) {
+    var s = cardState(c);
+    return round2(s.owed + missedDays(s.accountedDay, today) * DAILY_FEE);
+  }
+  // Everything needed to pay now: unpaid past days, plus today's fee if today is not paid
+  function payDue(c, today) {
+    var s = cardState(c);
+    return round2(settledOwed(c, today) + (s.paidDay !== today ? DAILY_FEE : 0));
+  }
+  // Manually frozen, or a daily card with unpaid days or today's fee not paid. Forever cards only lock by freeze.
+  function isCardLocked(c, today) {
+    if (!c) return false;
+    if (c.frozen) return true;
+    if (c.plan !== "daily") return false;
+    var s = cardState(c);
+    return s.owed > 0 || s.paidDay !== (today || todayKey());
+  }
+  function lockReason(c, today) {
+    if (!c) return "";
+    if (c.frozen) return c.freezeReason === "used" ? "Used once" : "Frozen";
+    if (c.plan !== "daily") return "";
+    var s = cardState(c);
+    if (s.owed > 0 || settledOwed(c, today) > 0) return "Unpaid days";
+    if (s.paidDay !== today) return "Today's $4.99 is due";
+    return "";
+  }
+
+  return {
+    DAILY_FEE: DAILY_FEE, round2: round2, keyOf: keyOf, todayKey: todayKey, dayDiff: dayDiff,
+    missedDays: missedDays, cardState: cardState, settledOwed: settledOwed, payDue: payDue,
+    isCardLocked: isCardLocked, lockReason: lockReason
+  };
+})();
 (function () {
   // If the Firebase scripts did not load (no internet), tell app.js
   if (typeof firebase === "undefined") {
@@ -201,7 +262,7 @@
 
   // card: optional { name, last4 } of the card used (shown on the receipt)
   function cardFields(card) {
-    return card ? { cardName: card.name, cardLast4: card.last4 } : {};
+    return card ? { cardId: card.id || null, cardName: card.name, cardLast4: card.last4 } : {};
   }
 
   async function fund(uid, amount, card) {
@@ -218,14 +279,16 @@
   }
 
   // Send money: the amount goes to them, amount + fee comes from you, and the fee goes to the fee owner.
-  // ownerUid: the fee owner's uid, or null when fees are off.
+  // card: { id, name, last4 } of the card used. The card must be paid up, not frozen, and inside its limits.
   async function sendMoney(senderUid, recipientUid, amount, fee, card, ownerUid) {
     if (senderUid === recipientUid) throw new Error("self");
     fee = round2(fee || 0);
     if (!ownerUid || ownerUid === senderUid) fee = 0;
     var total = round2(amount + fee);
+    var today = dayKey();
+    var month = today.slice(0, 7);
 
-    // Every account whose balance changes (one entry each, even if two roles are the same person)
+    // Every account whose balance changes (once each, even if two roles are the same person)
     var uids = [senderUid, recipientUid];
     if (fee > 0 && uids.indexOf(ownerUid) === -1) uids.push(ownerUid);
     var delta = {};
@@ -238,6 +301,7 @@
     var sTx = sRef.collection("transactions").doc();
     var rTx = rRef.collection("transactions").doc();
     var oTx = fee > 0 ? userRef(ownerUid).collection("transactions").doc() : null;
+    var cRef = card && card.id ? sRef.collection("cards").doc(card.id) : null;
     var feesRef = db.collection("config").doc("fees");
     var ref = makeRef();
 
@@ -245,6 +309,7 @@
       // All reads first, then all writes
       var snaps = {};
       for (var i = 0; i < uids.length; i++) snaps[uids[i]] = await tx.get(userRef(uids[i]));
+      var cSnap = cRef ? await tx.get(cRef) : null;
 
       if (!snaps[recipientUid].exists) throw new Error("not-found");
       if (!snaps[senderUid].exists) throw new Error("no-sender");
@@ -253,6 +318,26 @@
       var s = snaps[senderUid].data();
       var r = snaps[recipientUid].data();
       if ((s.balance || 0) < total) throw new Error("insufficient");
+
+      var cardPatch = null;
+      if (cRef) {
+        if (!cSnap.exists) throw new Error("card-gone");
+        var c = cSnap.data();
+        if (c.frozen) throw new Error("card-frozen");
+        if (R.isCardLocked(c, today)) throw new Error("card-locked");
+        if (c.lockTo && r.accountId !== c.lockTo) throw new Error("card-lockto");
+        var spentDay = c.spendDay === today ? (c.spentDay || 0) : 0;
+        var spentMonth = c.spendMonth === month ? (c.spentMonth || 0) : 0;
+        if (c.dailyLimit && spentDay + amount > c.dailyLimit) throw new Error("over-daily-limit");
+        if (c.monthlyLimit && spentMonth + amount > c.monthlyLimit) throw new Error("over-monthly-limit");
+        cardPatch = {
+          spendDay: today,
+          spentDay: round2(spentDay + amount),
+          spendMonth: month,
+          spentMonth: round2(spentMonth + amount)
+        };
+        if (c.singleUse) { cardPatch.frozen = true; cardPatch.usedUp = true; cardPatch.freezeReason = "used"; }
+      }
 
       var sName = fullName(s);
       var rName = fullName(r);
@@ -268,6 +353,7 @@
         tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
       }
       uids.forEach(function (u) { tx.update(userRef(u), patch[u]); });
+      if (cRef) tx.update(cRef, cardPatch);
 
       tx.set(sTx, Object.assign({
         type: "send", title: "Sent to " + rName, amount: -total, sent: amount, fee: fee,
@@ -347,7 +433,15 @@
     return deleteCollection(userRef(uid).collection("transactions"));
   }
 
-  // ---------- Cards ----------
+  // ---------- Cards and card plans ----------
+  // Plans: "daily" costs $4.99 a day (unpaid days build up as debt and lock the card),
+  // "forever" costs $9.99 once. The owner's cards are always "forever" and cost nothing.
+  // Each color costs $2 per card. Plain (no color) is free. Fees, plans and colors go to the owner.
+  var R = window.SBRules;
+  var DAILY_FEE = R.DAILY_FEE;
+  var FOREVER_PRICE = 9.99;
+  var COLOR_PRICE = 2;
+
   function luhnCheckDigit(body) {
     var sum = 0;
     for (var i = 0; i < body.length; i++) {
@@ -364,44 +458,218 @@
     for (var i = 0; i < 14; i++) body += Math.floor(Math.random() * 10);
     return body + luhnCheckDigit(body);
   }
-
-  // price: 0 for the normal color, more for the others (taken from your balance)
-  async function createCard(uid, name, finish, holder, price) {
-    price = round2(price || 0);
-    var number = makeCardNumber();
+  function newExpiry() {
     var exp = new Date();
     exp.setFullYear(exp.getFullYear() + 4);
+    return { expMonth: ("0" + (exp.getMonth() + 1)).slice(-2), expYear: String(exp.getFullYear()).slice(-2) };
+  }
+  function newCvv() {
+    return String(100 + Math.floor(Math.random() * 900));
+  }
+
+  // Does this card have a color? "plain" is always owned. Others must be in the colors list.
+  function ownsFinish(c, finish) {
+    return finish === "plain" || (c.colors || []).indexOf(finish) !== -1;
+  }
+
+  function insufficient() { return new Error("insufficient"); }
+
+  // Inside a transaction whose reads are already done: moves `amount` from uid to the owner and writes receipts for both.
+  function chargeInTx(tx, sSnap, oSnap, uid, ownerUid, amount, title, ownerTitle, extra) {
+    amount = round2(amount);
+    if (amount <= 0) return;
+    var bal = sSnap.data().balance || 0;
+    if (bal < amount) throw insufficient();
+    var ref = makeRef();
+    tx.update(userRef(uid), { balance: round2(bal - amount) });
+    tx.update(userRef(ownerUid), { balance: round2((oSnap.data().balance || 0) + amount) });
+    tx.set(userRef(uid).collection("transactions").doc(), Object.assign({
+      type: "card", title: title, amount: -amount, ref: ref, createdAt: stamp()
+    }, extra || {}));
+    tx.set(userRef(ownerUid).collection("transactions").doc(), {
+      type: "fee", title: ownerTitle || (title + " from " + fullName(sSnap.data())), amount: amount, ref: ref, createdAt: stamp()
+    });
+  }
+
+  // Unpaid past days on a daily card. Counts the missed days, collects what you can, and
+  // moves the day count forward so no day is ever charged twice.
+  async function settleOne(uid, ownerUid, cardId, today) {
     var uref = userRef(uid);
-    var ref = uref.collection("cards").doc();
-    var data = {
+    var oref = userRef(ownerUid);
+    var cref = uref.collection("cards").doc(cardId);
+    await db.runTransaction(async function (tx) {
+      var cs = await tx.get(cref);
+      var s = await tx.get(uref);
+      var o = await tx.get(oref);
+      if (!cs.exists || !s.exists || !o.exists) return;
+      var c = cs.data();
+      if (c.plan !== "daily") return;
+      var st = R.cardState(c);
+      if (!st.accountedDay || st.accountedDay >= today) return;
+      var owed = round2(st.owed + R.missedDays(st.accountedDay, today) * DAILY_FEE);
+      var charged = round2(Math.min(s.data().balance || 0, owed));
+      chargeInTx(tx, s, o, uid, ownerUid, charged, "Unpaid card days", "Unpaid card days from " + fullName(s.data()), {
+        cardId: cardId, cardName: c.name, cardLast4: c.last4
+      });
+      tx.update(cref, { owed: round2(owed - charged), accountedDay: today, paidDay: st.paidDay });
+    });
+  }
+
+  // Runs on app open, on sign-in, and when the date changes. Owner account has no debt.
+  async function settleCards(uid, ownerUid) {
+    if (!ownerUid || ownerUid === uid) return;
+    var today = dayKey();
+    var snap = await userRef(uid).collection("cards").get();
+    for (var i = 0; i < snap.docs.length; i++) {
+      if (snap.docs[i].data().plan !== "daily") continue;
+      await settleOne(uid, ownerUid, snap.docs[i].id, today);
+    }
+  }
+
+  // Pay for today on a daily card. Unpaid past days are included, so the card unlocks.
+  async function payCardToday(uid, ownerUid, cardId) {
+    var today = dayKey();
+    var uref = userRef(uid);
+    var oref = userRef(ownerUid);
+    var cref = uref.collection("cards").doc(cardId);
+    await db.runTransaction(async function (tx) {
+      var cs = await tx.get(cref);
+      var s = await tx.get(uref);
+      var o = await tx.get(oref);
+      if (!cs.exists) throw new Error("card-gone");
+      if (!s.exists) throw new Error("no-sender");
+      if (!o.exists) throw new Error("fee-owner-missing");
+      var c = cs.data();
+      if (c.plan !== "daily") return;
+      var due = R.payDue(c, today);
+      if (due <= 0) return;
+      chargeInTx(tx, s, o, uid, ownerUid, due, "Card fee", "Card fee from " + fullName(s.data()), {
+        cardId: cardId, cardName: c.name, cardLast4: c.last4
+      });
+      tx.update(cref, { owed: 0, paidDay: today, accountedDay: today });
+    });
+  }
+
+  // plan: "daily" or "forever". The owner's card is always forever and free.
+  // finish: the color. Plain is free. Other colors cost COLOR_PRICE (free for the owner).
+  async function createCard(uid, name, holder, plan, ownerUid, finish) {
+    var today = dayKey();
+    var isOwner = uid === ownerUid;
+    var usePlan = isOwner ? "forever" : (plan === "daily" ? "daily" : "forever");
+    finish = finish || "plain";
+    var number = makeCardNumber();
+    var ref = userRef(uid).collection("cards").doc();
+    var price = 0;
+    if (!isOwner) {
+      price = usePlan === "daily" ? DAILY_FEE : FOREVER_PRICE;
+      if (finish !== "plain") price += COLOR_PRICE;
+    }
+    var data = Object.assign({
       name: name,
       finish: finish,
+      colors: finish === "plain" ? [] : [finish],
       brand: Math.random() < 0.5 ? "visa" : "mastercard",
       number: number,
       last4: number.slice(-4),
-      expMonth: ("0" + (exp.getMonth() + 1)).slice(-2),
-      expYear: String(exp.getFullYear()).slice(-2),
-      cvv: String(100 + Math.floor(Math.random() * 900)),
+      cvv: newCvv(),
       holder: holder,
       frozen: false,
+      freezeReason: null,
+      singleUse: false,
+      usedUp: false,
+      reissued: 0,
+      limit: 0,
+      lockTo: null,
+      spentDay: 0,
+      spentMonth: 0,
+      plan: usePlan,
+      paidDay: today,
+      accountedDay: today,
+      owed: 0,
       createdAt: stamp()
-    };
-    if (price <= 0) {
-      await ref.set(data);
-      return ref.id;
-    }
-    var txRef = uref.collection("transactions").doc();
+    }, newExpiry());
+
+    var ownerRefDoc = userRef(ownerUid);
     await db.runTransaction(async function (tx) {
-      var snap = await tx.get(uref);
-      var balance = (snap.data().balance || 0);
-      if (balance < price) throw new Error("insufficient");
-      tx.update(uref, statsPatch({ card: price }, { balance: round2(balance - price) }));
+      var s = await tx.get(userRef(uid));
+      var o = await tx.get(ownerRefDoc);
+      if (!s.exists) throw new Error("no-sender");
+      if (price > 0 && !o.exists) throw new Error("fee-owner-missing");
+      chargeInTx(tx, s, o, uid, ownerUid, price, "New card: " + name, null);
       tx.set(ref, data);
-      tx.set(txRef, {
-        type: "card", title: "New card: " + name, amount: -price, ref: makeRef(), createdAt: stamp()
-      });
     });
     return ref.id;
+  }
+
+  // Buy a color for one card ($2 unless you own it already, or you are the owner)
+  async function buyColor(uid, ownerUid, cardId, finish) {
+    var uref = userRef(uid);
+    var cref = uref.collection("cards").doc(cardId);
+    await db.runTransaction(async function (tx) {
+      var cs = await tx.get(cref);
+      var s = await tx.get(uref);
+      var o = await tx.get(userRef(ownerUid));
+      if (!cs.exists) throw new Error("card-gone");
+      var c = cs.data();
+      if (ownsFinish(c, finish)) {
+        tx.update(cref, { finish: finish });
+        return;
+      }
+      if (uid !== ownerUid) chargeInTx(tx, s, o, uid, ownerUid, COLOR_PRICE, "Color: " + finish, null, { cardId: cardId });
+      tx.update(cref, { finish: finish, colors: FV.arrayUnion(finish) });
+    });
+  }
+
+  // Switch to a color the card already owns (free)
+  function setCardFinish(uid, cardId, finish) {
+    return userRef(uid).collection("cards").doc(cardId).update({ finish: finish });
+  }
+
+  // Daily spending limit for one card, in dollars (0 = no limit)
+  function setCardLimit(uid, cardId, limit) {
+    return userRef(uid).collection("cards").doc(cardId).update({ limit: round2(limit || 0) });
+  }
+
+  // Only pay this account ID (empty = pay anyone)
+  function setLockTo(uid, cardId, accountId) {
+    return userRef(uid).collection("cards").doc(cardId).update({ lockTo: accountId || null });
+  }
+
+  // One-time card: after one payment it freezes for good (reissue gives it a new number)
+  function setSingleUse(uid, cardId, on) {
+    return userRef(uid).collection("cards").doc(cardId).update({ singleUse: !!on, usedUp: false });
+  }
+
+  function renameCard(uid, cardId, name) {
+    return userRef(uid).collection("cards").doc(cardId).update({ name: name });
+  }
+
+  // New number, CVV and expiry. Name, color and history stay.
+  function reissueCard(uid, cardId) {
+    var number = makeCardNumber();
+    return userRef(uid).collection("cards").doc(cardId).update(Object.assign({
+      number: number,
+      last4: number.slice(-4),
+      cvv: newCvv(),
+      usedUp: false,
+      frozen: false,
+      freezeReason: null,
+      reissued: FV.increment(1)
+    }, newExpiry()));
+  }
+
+  async function freezeAllCards(uid, frozen) {
+    var snap = await userRef(uid).collection("cards").get();
+    var batch = db.batch();
+    snap.docs.forEach(function (d) {
+      batch.update(d.ref, { frozen: !!frozen, freezeReason: frozen ? "manual" : null });
+    });
+    await batch.commit();
+  }
+
+  // Report a receipt you don't recognize. An owner reads these in the database.
+  function createDispute(uid, txnId, note) {
+    return db.collection("disputes").add({ uid: uid, txnId: txnId, note: note || "", createdAt: stamp() });
   }
 
   function watchCards(uid, callback) {
@@ -411,7 +679,7 @@
   }
 
   function setCardFrozen(uid, cardId, frozen) {
-    return userRef(uid).collection("cards").doc(cardId).update({ frozen: !!frozen });
+    return userRef(uid).collection("cards").doc(cardId).update({ frozen: !!frozen, freezeReason: frozen ? "manual" : null });
   }
   function deleteCard(uid, cardId) {
     return userRef(uid).collection("cards").doc(cardId).delete();
@@ -419,6 +687,7 @@
   function setActiveCard(uid, cardId) {
     return userRef(uid).update({ activeCardId: cardId || null });
   }
+
 
   // ---------- Messages ----------
   function chatId(a, b) { return [a, b].sort().join("_"); }
@@ -547,7 +816,12 @@
       "fee-owner-missing": "Fees can't be paid right now. Try again later.",
       "owner-exists": "Someone already set up the owner password.",
       "bad-fund-password": "That funding password isn't right.",
-      "no-crypto": "This browser can't do secure passwords. Use Safari."
+      "no-crypto": "This browser can't do secure passwords. Use Safari.",
+      "card-locked": "This card is locked. Pay its fee or unfreeze it first.",
+      "card-lockto": "This card can only pay one specific person.",
+      "card-frozen": "This card is frozen. Unfreeze it first.",
+      "card-gone": "That card no longer exists.",
+      "over-daily-limit": "That is over this card's daily limit."
     };
     if (byMessage[err.message]) return byMessage[err.message];
 
@@ -573,6 +847,11 @@
   }
 
   window.Wallet = {
+    prices: { daily: DAILY_FEE, forever: FOREVER_PRICE, color: COLOR_PRICE },
+    ownsFinish: ownsFinish, settleCards: settleCards, payCardToday: payCardToday,
+    buyColor: buyColor, setCardFinish: setCardFinish, setCardLimit: setCardLimit, setLockTo: setLockTo, setSingleUse: setSingleUse,
+    renameCard: renameCard, reissueCard: reissueCard, freezeAllCards: freezeAllCards, createDispute: createDispute,
+    rules: R,
     signUp: signUp, logIn: logIn, logOut: logOut, watchAuth: watchAuth,
     ensureProfile: ensureProfile, ensureAccountId: ensureAccountId, watchProfile: watchProfile,
     getPerson: getPerson, findUser: findUser, feeOwner: feeOwner,

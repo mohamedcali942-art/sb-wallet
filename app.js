@@ -42,10 +42,9 @@
   // To turn a feature on later, change false to true on that line.
   SB.features = Object.assign({
     fees: true,          // fee when you send money (paid to the fee owner)
-    paidColors: false,   // card colors that cost $10
-    requireCard: false,  // you must make a card before you can use the wallet
+    requireCard: true,   // you must make a card before you can use the wallet
     owner: false,        // only the owner can add money, with a second password
-    charts: false        // spending donut + bar charts
+    charts: true         // analytics: donut + bar charts
   }, window.__SB_FLAGS || {});
   var listeners = {};
   SB.on = function (name, fn) { (listeners[name] = listeners[name] || []).push(fn); };
@@ -60,6 +59,19 @@
     toastTimer = setTimeout(function () { el.classList.remove("show"); }, 2200);
   }
   function money(n) { return n.toLocaleString("en-US", { style: "currency", currency: "USD" }); }
+  // Shows the balance with the cents in faded text, like "$186,486" + ".28"
+  function renderBal(n) {
+    var s = money(n);
+    var box = $("balance");
+    var i = s.lastIndexOf(".");
+    box.textContent = "";
+    if (i === -1) { box.textContent = s; return; }
+    box.appendChild(document.createTextNode(s.slice(0, i)));
+    var c = document.createElement("span");
+    c.className = "cents";
+    c.textContent = s.slice(i);
+    box.appendChild(c);
+  }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function fullName(p) { return (p.firstName + " " + (p.lastName || "")).trim(); }
   function colorClass(text) { return "c" + (((text || "A").charCodeAt(0) % 3) + 1); }
@@ -199,7 +211,7 @@
       var t = Math.min((now - start) / duration, 1);
       var eased = 1 - Math.pow(1 - t, 4); // starts fast, slows at the end
       shownBalance = from + (to - from) * eased;
-      $("balance").textContent = money(shownBalance);
+      renderBal(shownBalance);
       if (t < 1) balanceFrame = requestAnimationFrame(step);
       else shownBalance = to;
     }
@@ -209,7 +221,7 @@
     cancelAnimationFrame(balanceFrame);
     shownBalance = n;
     $("balance").classList.remove("loading-text");
-    $("balance").textContent = money(n);
+    renderBal(n);
   }
 
   // Things not built yet
@@ -530,7 +542,7 @@
   }
 
   function renderQuick(list) {
-    ["quickRow", "quickRowHome"].forEach(function (id) {
+    ["quickRowHome"].forEach(function (id) {
       var row = $(id);
       row.innerHTML = "";
       row.appendChild(quickItem("+", "Add New", true, function () { startSend(); }));
@@ -563,24 +575,39 @@
     }
 
     var shown = list.filter(function (t) {
-      if (filter === "income") return t.amount > 0;
-      if (filter === "expenses") return t.amount < 0;
+      if (filter === "sent") return t.amount < 0 && t.type !== "fee";
+      if (filter === "received") return t.amount > 0 && t.type !== "fee";
+      if (filter === "fees") return t.type === "fee" || (t.type === "send" && t.fee > 0);
       return true;
     });
     var box = $("txnList");
     box.innerHTML = "";
-    shown.forEach(function (t) { box.appendChild(txnRow(t)); });
+    shown.forEach(function (t) {
+      box.appendChild(SB.buildHistoryCard ? SB.buildHistoryCard(t) : txnRow(t));
+    });
     $("txnEmpty").classList.toggle("hidden", shown.length > 0);
 
+    // Today's money in, for the hero pill
+    var today = SBRules.todayKey();
+    var inToday = list.reduce(function (sum, t) {
+      return (t.amount > 0 && keyOfDate(dateOf(t)) === today) ? sum + t.amount : sum;
+    }, 0);
+    $("todayPill").textContent = "+ " + money(Math.round(inToday * 100) / 100) + " today";
 
     renderQuick(list);
+    SB.emit("receipts", list);
   }
+
+  function keyOfDate(d) {
+    return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+  }
+  SB.keyOfDate = keyOfDate;
 
   document.querySelectorAll(".pill").forEach(function (p) {
     p.addEventListener("click", function () {
       document.querySelectorAll(".pill").forEach(function (x) { x.classList.remove("active"); });
       p.classList.add("active");
-      filter = p.textContent.trim().toLowerCase();
+      filter = p.dataset.filter || "all";
       renderTxns();
     });
   });
@@ -607,8 +634,8 @@
   var personResolve = null;
   var funding = false; // true while a Fund / Send / card step is in progress
 
-  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vNotifs", "vDelete", "vFundPw", "vOwner"];
-  var HIGH = ["vSearch", "vDelete", "vCardNew", "vFundPw", "vOwner"]; // these have typing, so they sit high (keyboard won't cover them)
+  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vCards", "vNotifs", "vDelete", "vFundPw", "vOwner", "vReport"];
+  var HIGH = ["vSearch", "vDelete", "vCardNew", "vFundPw", "vOwner", "vReport"]; // these have typing, so they sit high (keyboard won't cover them)
 
   var sheetToken = 0;
   var lockY = 0;
@@ -954,7 +981,37 @@
   // The card being used (cards.js decides which), or nothing
   function cardInfo() {
     var c = SB.activeCard ? SB.activeCard() : null;
-    return c ? { name: c.name, last4: c.last4, frozen: !!c.frozen } : null;
+    return c ? c : null;
+  }
+
+  // One helper for "is this card locked?" (manual freeze, or a daily card with unpaid days)
+  SB.isCardLocked = function (card) {
+    return SBRules.isCardLocked(card, SBRules.todayKey());
+  };
+  SB.isOwnerAccount = function () {
+    return !!SB.state.feeOwner && SB.state.feeOwner === SB.state.uid;
+  };
+  SB.cleanId = function (text) { return String(text || "").replace(/\D/g, ""); };
+
+  // Money a card has sent today, from the receipts on screen (receipts carry cardId)
+  var loadedReceipts = [];
+  SB.on("receipts", function (list) { loadedReceipts = list; SB.emit("spend"); });
+  SB.spentToday = function (cardId) {
+    var today = SBRules.todayKey();
+    return loadedReceipts.reduce(function (sum, t) {
+      if (t.cardId !== cardId || !(t.amount < 0) || t.type === "fee") return sum;
+      return keyOfDate(dateOf(t)) === today ? sum + Math.abs(t.amount) : sum;
+    }, 0);
+  };
+  // True if this payment fits under the card's daily limit (0 = no limit)
+  function underLimit(card, amount) {
+    if (!card || !card.limit) return true;
+    if (SB.spentToday(card.id) + amount > card.limit + 0.001) {
+      closeSheet();
+      toast("That's over this card's daily limit of " + money(card.limit) + ".");
+      return false;
+    }
+    return true;
   }
 
   // Checks the card rules. Returns { card } (card can be null) or null if something blocks you.
@@ -975,11 +1032,12 @@
         return null;
       }
     }
-    if (c && c.frozen) {
-      toast("Your card " + c.name + " is frozen. Unfreeze it first.");
+    if (c && SB.isCardLocked(c)) {
+      if (c.frozen) toast("Your card " + c.name + " is frozen. Unfreeze it first.");
+      else toast("Your card " + c.name + " is locked: " + SBRules.lockReason(c, SBRules.todayKey()) + ". Pay it first.");
       return null;
     }
-    return { card: c ? { name: c.name, last4: c.last4 } : null };
+    return { card: c ? { id: c.id, name: c.name, last4: c.last4, limit: c.limit || 0, lockTo: c.lockTo || null } : null };
   }
   SB.needCard = needCard;
 
@@ -1162,6 +1220,11 @@
 
       var person = await askPerson(prefill, { title: "Send money", button: "Continue" });
       if (!person) return;
+      if (card && card.lockTo && person.accountId !== card.lockTo) {
+        closeSheet();
+        toast(card.name + " can only pay ID " + prettyId(card.lockTo) + ".");
+        return;
+      }
 
       var balance = latestBalance;
       var amount = await askAmount({
@@ -1176,6 +1239,7 @@
       if (amount === null) return;
 
       var fee = feeFor(amount);
+      if (!underLimit(card, amount)) return;
       if (!(await pinGate("Sending " + money(amount) + " + " + money(fee) + " fee"))) return;
 
       await runBusy(
@@ -1307,6 +1371,12 @@
     flow(async function () {
       if (!(await needPin())) return;
       var fee = feeFor(r.amount);
+      if (card && card.lockTo && r.from.accountId !== card.lockTo) {
+        closeSheet();
+        toast(card.name + " can only pay ID " + prettyId(card.lockTo) + ".");
+        return;
+      }
+      if (!underLimit(card, r.amount)) return;
       if (!(await pinGate("Paying " + money(r.amount) + " + " + money(fee) + " fee to " + who))) return;
       await runBusy(
         "Sending…",
@@ -1337,7 +1407,7 @@
             title: firstOf(r.from.name) + " asked for money",
             body: money(r.amount) + (r.note ? " · " + r.note : ""),
             icon: "?",
-            onTap: function () { switchTab("pay"); }
+            onTap: function () { switchTab("home"); }
           });
         }
       });
@@ -1346,7 +1416,6 @@
   }
 
   $("requestTile").addEventListener("click", startRequest);
-  $("requestBigTile").addEventListener("click", startRequest);
 
   // ---------- Receipt ----------
   var openTxn = null;
@@ -1364,6 +1433,9 @@
     });
     $("rcRef").textContent = refOf(t);
     $("rcPaid").textContent = paidWith(t);
+    $("rcCardRow").classList.toggle("hidden", !t.cardName);
+    if (t.cardName) $("rcCard").textContent = t.cardName + " •• " + t.cardLast4;
+    $("rcReportBtn").classList.toggle("hidden", !t.id);
     var hasFee = t.type === "send" && t.fee > 0;
     $("rcSentRow").classList.toggle("hidden", !hasFee);
     $("rcFeeRow").classList.toggle("hidden", !hasFee);
@@ -1400,12 +1472,39 @@
     setTimeout(function () { SB.chat.openWith(t.counterpartUid); }, 280);
   });
 
+  // Report a receipt you don't recognize (writes to the disputes collection)
+  $("rcReportBtn").addEventListener("click", function () {
+    if (!openTxn) return;
+    $("reportNote").value = "";
+    $("reportError").textContent = "";
+    showView("vReport");
+    $("reportNote").focus({ preventScroll: true });
+  });
+  $("reportSend").addEventListener("click", function () {
+    var t = openTxn;
+    var note = $("reportNote").value.trim();
+    if (!t) return;
+    if (!note) { $("reportError").textContent = "Tell us what looks wrong."; return; }
+    $("reportSend").disabled = true;
+    Wallet.createDispute(SB.state.uid, t.id, note).then(function () {
+      $("reportSend").disabled = false;
+      closeSheet();
+      toast("Thanks. We've got your report.");
+    }, function (e) {
+      $("reportSend").disabled = false;
+      $("reportError").textContent = Wallet.friendlyError(e);
+    });
+  });
+
+  // Used by screens.js (History cards, Scan)
+  SB.openReceipt = openReceipt;
+  SB.startSend = function (prefill) { startSend(prefill); };
+
   // ---------- Buttons that start things ----------
-  $("fundBtn").addEventListener("click", startFund);
   $("fundTile").addEventListener("click", startFund);
   $("sendTile").addEventListener("click", function () { startSend(); });
-  $("sendBigTile").addEventListener("click", function () { startSend(); });
-  $("searchBtn").addEventListener("click", function () { startSend(); });
+  $("menuBtn").addEventListener("click", function () { switchTab("account"); });
+  $("homeFreezeAll").addEventListener("click", function () { $("freezeAllBtn").click(); });
 
   async function copyMyId() {
     var id = (SB.state.profile && SB.state.profile.accountId) || "";
@@ -1413,8 +1512,8 @@
     var ok = await copyText(id);
     toast(ok ? "ID number copied!" : "Couldn't copy. Read your ID number out to them.");
   }
-  $("copyBtn").addEventListener("click", copyMyId);
   $("accCopy").addEventListener("click", copyMyId);
+  SB.copyMyId = copyMyId;
 
   // ---------- Delete account ----------
   $("deleteAccBtn").addEventListener("click", function () {
@@ -1535,18 +1634,9 @@
 
   // ---------- Switch-dependent look ----------
   document.body.classList.toggle("no-charts", !SB.features.charts);
-  if (!SB.features.charts) {
-    $("tab-activity").querySelector("h2").textContent = "Activity";
-    document.querySelector('.tabbtn[data-tab="activity"] span').textContent = "Activity";
-    $("tab-activity").querySelector(".note").lastChild.textContent = " hours.";
-  }
 
   // ---------- Small links that jump to tabs ----------
-  $("seeAllPay").addEventListener("click", function () { switchTab("pay"); });
-  $("viewAllTx").addEventListener("click", function () { switchTab("activity"); });
-  $("spendTile").addEventListener("click", function () { switchTab("activity"); });
-  $("feeTile").addEventListener("click", function () { switchTab("activity"); });
-  $("issueBanner").addEventListener("click", function () { if (SB.cards) SB.cards.openNew(true); });
+  $("viewAllTx").addEventListener("click", function () { switchTab("history"); });
 
   // ---------- The app ----------
   var stopOwner = null;
@@ -1580,11 +1670,6 @@
 
   function applyProfile(profile) {
     var full = fullName(profile);
-    $("helloName").textContent = profile.firstName;
-    $("avatar").textContent = profile.firstName.charAt(0).toUpperCase();
-    $("cardName").textContent = full;
-    $("cardUser").textContent = prettyId(profile.accountId);
-    $("username").textContent = prettyId(profile.accountId);
     $("accName").textContent = full;
     $("accUser").textContent = prettyId(profile.accountId);
     latestBalance = profile.balance;
@@ -1602,7 +1687,6 @@
     latestBalance = 0;
     notifs = [];
     updateBell();
-    $("greeting").textContent = greetingText();
     $("accEmail").textContent = user.email || "—";
 
     var cached = readCache(user.uid);
@@ -1613,8 +1697,7 @@
       applyProfile(cached.profile);
       setBalanceNow(cached.profile.balance);
     } else {
-      ["helloName", "cardName", "cardUser", "username", "accName", "accUser"].forEach(function (id) { $(id).textContent = "…"; });
-      $("avatar").textContent = "…";
+      ["accName", "accUser"].forEach(function (id) { $(id).textContent = "…"; });
       $("balance").classList.add("loading-text");
       $("balance").textContent = "Loading…";
     }
@@ -1646,12 +1729,20 @@
         list.forEach(function (t) {
           if (seen[t.id]) return;
           seen[t.id] = true;
-          if (t.type === "receive") {
+          // Alerts for every money-in and money-out event (card payments included)
+          if (t.type === "receive" || t.type === "fee") {
             notify({
-              title: "Money received",
-              body: "+" + money(t.amount) + " from " + (t.counterpartName || "someone"),
+              title: t.type === "fee" ? "Money in" : "Money received",
+              body: "+" + money(t.amount) + (t.type === "fee" ? " · " + (t.title || "fee") : " from " + (t.counterpartName || "someone")),
               icon: "$",
-              onTap: function () { switchTab("activity"); }
+              onTap: function () { switchTab("history"); }
+            });
+          } else if (t.type === "send" || t.type === "card") {
+            notify({
+              title: t.type === "card" ? "Card payment" : "Money sent",
+              body: "-" + money(Math.abs(t.amount)) + " · " + (t.title || ""),
+              icon: "↗",
+              onTap: function () { switchTab("history"); }
             });
           }
         });
@@ -1677,7 +1768,10 @@
 
     startRequestsWatch(user);
     SB.state.feeOwner = null;
-    Wallet.feeOwner().then(function (uid) { SB.state.feeOwner = uid; });
+    Wallet.feeOwner().then(function (uid) {
+      SB.state.feeOwner = uid;
+      runSettle(true); // unpaid card days are counted as soon as we know the owner
+    });
 
     SB.emit("start", user);
   }
@@ -1687,6 +1781,89 @@
     clearForm();
     await Wallet.logOut();
   });
+
+  // ---------- Card debt: settle unpaid days on open, on sign-in, and when the date changes ----------
+  var settledDay = "";
+  function runSettle(force) {
+    if (!SB.state.uid || !SB.state.feeOwner) return;
+    var day = SBRules.todayKey();
+    if (!force && day === settledDay) return;
+    settledDay = day;
+    Wallet.settleCards(SB.state.uid, SB.state.feeOwner).catch(function () {});
+  }
+
+  // ---------- Face ID for card numbers (WebAuthn: register once, then unlock) ----------
+  var FACE_KEY = "sbw_face_on";
+  var CRED_KEY = "sbw_face_cred";
+  function readLS(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function writeLS(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+  function toB64(buf) {
+    var a = new Uint8Array(buf), s = "";
+    for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+    return btoa(s);
+  }
+  function fromB64(str) {
+    var s = atob(str), a = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+    return a;
+  }
+  function randBytes(n) { var a = new Uint8Array(n); window.crypto.getRandomValues(a); return a; }
+
+  SB.faceOn = function () { return readLS(FACE_KEY) === "1"; };
+  // "ok" (passed), "no" (not matched or cancelled), "unavailable" (use the PIN instead)
+  SB.verifyFace = async function () {
+    try {
+      var id = readLS(CRED_KEY);
+      if (!window.PublicKeyCredential || !navigator.credentials || !id) return "unavailable";
+      var got = await navigator.credentials.get({
+        publicKey: { challenge: randBytes(32), allowCredentials: [{ type: "public-key", id: fromB64(id) }], userVerification: "required", timeout: 60000 }
+      });
+      return got ? "ok" : "no";
+    } catch (e) {
+      return e && e.name === "NotAllowedError" ? "no" : "unavailable";
+    }
+  };
+  // Registers this device once. Returns true if it worked.
+  async function enableFace() {
+    try {
+      if (!window.PublicKeyCredential || !navigator.credentials) return false;
+      var made = await navigator.credentials.create({
+        publicKey: {
+          challenge: randBytes(32),
+          rp: { name: "SB Wallet" },
+          user: { id: new TextEncoder().encode(SB.state.uid).slice(0, 64), name: SB.state.user.email || "sb-wallet", displayName: "SB Wallet" },
+          pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+          authenticatorSelection: { userVerification: "required" },
+          timeout: 60000
+        }
+      });
+      if (!made) return false;
+      writeLS(CRED_KEY, toB64(made.rawId));
+      writeLS(FACE_KEY, "1");
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function renderFaceToggle() {
+    var on = SB.faceOn();
+    $("faceToggle").classList.toggle("on", on);
+    $("faceToggle").setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  $("faceToggle").addEventListener("click", async function () {
+    if (SB.faceOn()) {
+      writeLS(FACE_KEY, null);
+      renderFaceToggle();
+      toast("Card numbers use the PIN again");
+      return;
+    }
+    if (!(await needPin())) return;
+    if (!(await pinGate("Turn on Face ID for card numbers"))) return;
+    var ok = await enableFace();
+    renderFaceToggle();
+    toast(ok ? "Face ID is on for card numbers" : "This device can't set up Face ID here. The PIN will be used.");
+  });
+  SB.on("start", renderFaceToggle);
 
   // ---------- Logo pictures + floating money ----------
   // Show your logo picture on the splash, cut the "SB" mark out of it for the login page,
@@ -1708,6 +1885,10 @@
         $("markImg").src = c.toDataURL("image/png");
         $("markImg").hidden = false;
         $("markFallback").style.display = "none";
+        // the same mark in the brand row at the top of Home
+        $("brandImg").src = $("markImg").src;
+        $("brandImg").hidden = false;
+        $("brandFallback").style.display = "none";
 
         // home screen icon: the mark on a dark background
         var ic = document.createElement("canvas");
@@ -1774,6 +1955,7 @@
   // Once a minute: drop receipts that are too old, and refresh the "5m / 2h" times
   setInterval(function () {
     if (!SB.state.uid) return;
+    runSettle(false); // only does work when the date has changed
     renderTxns();
     cleanOldReceipts(txns);
     SB.emit("tick");

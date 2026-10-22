@@ -127,7 +127,7 @@
 
   function openThread(person) {
     if (!SB.state.uid || !person || person.uid === SB.state.uid) return;
-    SB.openTab("messages");
+    SB.openTab("home"); // the thread slides in over Home
     var id = Wallet.chatId(SB.state.uid, person.uid);
     if (stopMsgs) { stopMsgs(); stopMsgs = null; }
     thread = { id: id, other: person };
@@ -215,7 +215,6 @@
   }
 
   $("newMsgBtn").addEventListener("click", newMessage);
-  $("msgMiniTile").addEventListener("click", newMessage);
 
   SB.chat = { openWith: openWith, openThread: openThread };
 

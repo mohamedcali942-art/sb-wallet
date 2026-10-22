@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="SB Wallet">
-  <meta name="theme-color" content="#0A0E14">
+  <meta name="theme-color" content="#0B1B33">
   <meta name="description" content="SB Wallet: a fake-money practice wallet. Nothing here is real money.">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <link rel="apple-touch-icon" id="touchIcon">
   <title>SB Wallet</title>
   <link rel="stylesheet" href="style.css">
@@ -15,7 +15,7 @@
 <body>
   <noscript><style>#splash{display:none}</style><p style="padding:2rem;text-align:center;color:#8794A8">SB Wallet needs JavaScript. Turn it on in your browser settings, then reload.</p></noscript>
 
-  <!-- The SB logo (drawn once, used everywhere) -->
+  <!-- The SB logo (drawn once, used everywhere as a fallback) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <linearGradient id="gS" gradientUnits="userSpaceOnUse" x1="40" y1="176" x2="140" y2="28">
@@ -24,7 +24,6 @@
       <linearGradient id="gB" gradientUnits="userSpaceOnUse" x1="112" y1="186" x2="118" y2="50">
         <stop offset="0" stop-color="#3DF0B0"/><stop offset=".55" stop-color="#22DDD0"/><stop offset="1" stop-color="#1CBDF0"/>
       </linearGradient>
-      <radialGradient id="haloGrad"><stop offset="0" stop-color="#3FE9E0" stop-opacity=".45"/><stop offset=".6" stop-color="#3B82F6" stop-opacity=".15"/><stop offset="1" stop-color="#3B82F6" stop-opacity="0"/></radialGradient>
       <filter id="blurGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5"/></filter>
       <symbol id="sbLogo" viewBox="20 10 176 180">
         <g fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -87,179 +86,171 @@
 
     <!-- HOME -->
     <section id="tab-home" class="tab active">
-      <header class="home-top">
-        <div id="avatar" class="avatar">S</div>
-        <div class="who">
-          <p id="greeting" class="small muted">Good morning!</p>
-          <p id="helloName" class="name">SB Wallet</p>
+      <header class="brand-row">
+        <div class="brand">
+          <img id="brandImg" class="brand-img" alt="" hidden>
+          <svg id="brandFallback" class="brand-mark" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
+          <span class="brand-name">SB Wallet</span>
         </div>
-        <button id="bellBtn" class="icon-btn" type="button" aria-label="Notifications">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
-          <span id="bellBadge" class="badge hidden">0</span>
-        </button>
+        <div class="round-btns">
+          <button id="bellBtn" class="round-btn" type="button" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+            <span id="bellBadge" class="badge hidden">0</span>
+          </button>
+          <button id="menuBtn" class="round-btn" type="button" aria-label="Account">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M4 12h16M4 17h7"/></svg>
+          </button>
+        </div>
       </header>
 
-      <div class="wallet-card fin-none" id="walletCard">
-        <div class="wc-top">
-          <div>
-            <p class="wc-title">SB Wallet</p>
-            <p id="cardName" class="wc-name">—</p>
-          </div>
-          <button id="fundBtn" class="wc-plus" type="button" aria-label="Add money">+</button>
-        </div>
-        <p id="balance" class="wc-balance">$0.00</p>
-        <div class="wc-bottom">
-          <span id="cardUser">—</span>
-          <span id="wcBrand" class="mc"><i></i><i></i></span>
+      <div class="hero" id="hero">
+        <p class="hero-label">Your total balance</p>
+        <p id="balance" class="hero-balance">$0.00</p>
+        <div class="hero-pills">
+          <span class="pill-chip" id="todayPill">+ $0.00 today</span>
+          <span class="pill-chip" id="heroCards">0 cards</span>
         </div>
       </div>
 
-      <button id="issueBanner" class="issue-banner" type="button">
-        <div class="tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h3"/></svg></div>
-        <div><b>Make your first card</b><span>You need a card to send money. The blue one is free.</span></div>
-      </button>
-
-      <div class="handle-row">
-        <div>
-          <p class="small muted">Your ID number</p>
-          <p id="username" class="handle">—</p>
-        </div>
-        <button id="copyBtn" class="copy" type="button">Copy</button>
-      </div>
-
-      <div class="acts">
-        <button class="act go" id="fundTile" type="button">
-          <span class="act-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
-          <span>Add money</span>
-        </button>
-        <button class="act" id="sendTile" type="button">
-          <span class="act-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span>
-          <span>Send</span>
-        </button>
-        <button class="act" id="requestTile" type="button">
-          <span class="act-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M15 17H7V9"/></svg></span>
+      <div class="acts3">
+        <button class="act3" id="requestTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M15 17H7V9"/></svg></span>
           <span>Request</span>
         </button>
-        <button class="act" data-soon type="button">
-          <span class="act-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg></span>
-          <span>Scan to Pay</span>
+        <button class="act3 go" id="fundTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          <span>Add Fund</span>
+        </button>
+        <button class="act3" id="sendTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span>
+          <span>Send</span>
         </button>
       </div>
 
-      <div class="sec-head">
-        <p class="card-title">Quick Send</p>
-        <button id="seeAllPay" class="link-btn" type="button">See all</button>
-      </div>
-      <div id="quickRowHome" class="quick"></div>
+      <div id="lockBanners" class="lock-banners"></div>
 
-      <div class="mini-tiles">
-        <button id="spendTile" class="stat-tile" type="button">
-          <div><span class="muted small">Spending</span><br><b id="spendTotal">$0.00</b></div>
-          <div id="spendPills" class="pills-bar"><i style="flex:1;background:#243044"></i></div>
-        </button>
-        <button id="feeTile" class="stat-tile" type="button">
-          <div><span class="muted small">Fees paid</span><br><b id="feeTotal">$0.00</b></div>
-          <span class="muted small">this month</span>
-        </button>
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">My Cards</p>
+          <button id="seeAllCards" class="link-btn" type="button">See All</button>
+        </div>
+        <div id="cardList" class="card-list"></div>
+        <p id="cardListEmpty" class="muted small list-empty hidden">No cards yet. Make your first one.</p>
+        <div class="list-foot">
+          <span id="cardsCount" class="muted small"></span>
+          <button id="homeFreezeAll" class="link-btn" type="button">Freeze all</button>
+        </div>
       </div>
 
-      <div class="sec-head">
-        <p class="card-title">My cards</p>
-        <span id="cardsCount" class="muted small"></span>
+      <div class="list-card" id="reqCard">
+        <div class="list-head">
+          <p class="card-title">Requests</p>
+        </div>
+        <div id="reqList" class="req-list"></div>
+        <div id="reqEmpty" class="empty">
+          <p class="muted">Money you ask for, and money people ask you for, shows up here.</p>
+        </div>
       </div>
-      <div id="cardsRow" class="cards-row"></div>
 
-      <div class="sec-head">
-        <p class="card-title">Transactions</p>
-        <button id="viewAllTx" class="link-btn" type="button">View All</button>
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">Quick Send</p>
+        </div>
+        <div id="quickRowHome" class="quick"></div>
       </div>
-      <div class="soft-card" style="margin-top:0">
+
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">Messages</p>
+          <span class="msg-head-right">
+            <button id="newMsgBtn" class="link-btn" type="button">+ New</button>
+            <span id="msgBadge" class="badge inline hidden">0</span>
+          </span>
+        </div>
+        <div id="chatList" class="chat-list"></div>
+        <p id="chatEmpty" class="muted small list-empty">No messages yet. Tap “+ New” and type someone's ID number.</p>
+      </div>
+
+      <div class="list-card">
+        <div class="list-head">
+          <p class="card-title">Recent receipts</p>
+          <button id="viewAllTx" class="link-btn" type="button">View All</button>
+        </div>
         <div id="homeTxns"><p class="muted">Nothing yet. Your sent and received money will show up here.</p></div>
       </div>
     </section>
 
-    <!-- PAYMENTS -->
-    <section id="tab-pay" class="tab">
-      <header class="page-top"><h2>Payments</h2></header>
+    <!-- SCAN -->
+    <section id="tab-scan" class="tab">
+      <header class="page-top"><h2>Scan</h2></header>
 
-      <button id="searchBtn" class="search" type="button">Send to an ID number…</button>
-
-      <p class="section">Quick Send</p>
-      <div id="quickRow" class="quick"></div>
-
-      <div class="big-tiles">
-        <button class="big-tile" id="sendBigTile" type="button">
-          <span class="tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span>
-          <strong>Send Money</strong><span class="muted">To friends &amp; family</span>
-        </button>
-        <button class="big-tile" id="requestBigTile" type="button">
-          <span class="tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M15 17H7V9"/></svg></span>
-          <strong>Request Money</strong><span class="muted">Ask someone to pay you</span>
-        </button>
+      <div class="list-card center-card">
+        <p class="card-title">Your ID number</p>
+        <p class="muted small">Let someone scan this to send you money.</p>
+        <div id="qrBox" class="qr-box"></div>
+        <p id="myIdText" class="handle">—</p>
+        <button id="scanCopy" class="copy" type="button">Copy</button>
       </div>
 
-      <p class="section">Requests</p>
-      <div id="reqList" class="req-list"></div>
-      <div id="reqEmpty" class="empty">
-        <p class="empty-title">No requests yet.</p>
-        <p class="muted">Money you ask for, and money people ask you for, shows up here.</p>
-      </div>
-
-      <div class="big-tiles">
-        <button class="mini-tile" data-soon type="button"><span class="dark-ic">▦</span>Scan to Pay</button>
-        <button class="mini-tile" id="msgMiniTile" type="button"><span class="dark-ic">✉</span>Message</button>
+      <div class="list-card center-card">
+        <p class="card-title">Scan a code</p>
+        <p class="muted small">Point the camera at someone's SB Wallet code.</p>
+        <div class="scan-frame">
+          <video id="scanVideo" playsinline muted></video>
+          <canvas id="scanCanvas" hidden></canvas>
+        </div>
+        <p id="scanMsg" class="muted small scan-msg"></p>
+        <button id="scanStart" class="primary wide" type="button">Open camera</button>
       </div>
     </section>
 
-    <!-- TRANSACTIONS -->
-    <section id="tab-activity" class="tab">
-      <header class="page-top">
-        <h2>Spending</h2>
-        <button id="delAllBtn" class="link-btn danger" type="button">Delete all</button>
-      </header>
+    <!-- ANALYTICS -->
+    <section id="tab-analytics" class="tab">
+      <header class="page-top"><h2>Analytics</h2></header>
 
-      <div class="chart-card">
+      <div class="list-card light">
         <div class="chart-head"><b>Where it went</b><span class="muted small">this month</span></div>
         <div class="donut-wrap">
           <div class="donut">
             <svg viewBox="0 0 100 100" id="donutSvg"></svg>
-            <div class="donut-mid"><b id="donutTotal">$0.00</b><span>spent</span></div>
+            <div class="donut-mid"><b id="donutTotal">$0</b><span>sent</span></div>
           </div>
           <div id="legend" class="legend"></div>
         </div>
       </div>
 
-      <div class="chart-card">
+      <div class="list-card light">
         <div class="chart-head"><b>Last 7 days</b><span class="muted small">money out and in</span></div>
         <div id="bars" class="bars"></div>
-        <div class="chart-key"><span><i style="background:#3B6BFF"></i>Spent</span><span><i style="background:#10B981"></i>Received</span></div>
+        <div class="chart-key"><span><i style="background:#1E3A66"></i>Sent</span><span><i style="background:#7FB8F0"></i>Received</span></div>
       </div>
+
+      <div class="list-card light">
+        <div class="chart-head"><b>By card</b><span class="muted small">this month</span></div>
+        <div id="cardBreakdown" class="breakdown"></div>
+      </div>
+    </section>
+
+    <!-- HISTORY -->
+    <section id="tab-history" class="tab">
+      <header class="page-top">
+        <h2>History</h2>
+        <button id="delAllBtn" class="link-btn danger" type="button">Delete all</button>
+      </header>
 
       <div class="pills">
-        <button class="pill active" type="button">All</button>
-        <button class="pill" type="button">Income</button>
-        <button class="pill" type="button">Expenses</button>
+        <button class="pill active" type="button" data-filter="all">All</button>
+        <button class="pill" type="button" data-filter="sent">Sent</button>
+        <button class="pill" type="button" data-filter="received">Received</button>
+        <button class="pill" type="button" data-filter="fees">Fees</button>
       </div>
 
-      <div id="txnList"></div>
+      <div id="txnList" class="txn-list"></div>
       <div id="txnEmpty" class="empty">
         <p class="empty-title">No transactions yet.</p>
         <p class="muted">Tap a receipt to see it or delete it.</p>
       </div>
       <p class="note">Receipts delete themselves after <span id="lifeHours">24</span> hours. Your charts stay.</p>
-    </section>
-
-    <!-- MESSAGES -->
-    <section id="tab-messages" class="tab">
-      <header class="page-top">
-        <h2>Messages</h2>
-        <button id="newMsgBtn" class="link-btn" type="button">+ New</button>
-      </header>
-      <div id="chatList" class="chat-list"></div>
-      <div id="chatEmpty" class="empty">
-        <p class="empty-title">No messages yet.</p>
-        <p class="muted">Tap “+ New” and type someone's username to start a chat.</p>
-      </div>
     </section>
 
     <!-- ACCOUNT -->
@@ -277,6 +268,14 @@
         <p id="accEmail" class="value">—</p>
       </div>
 
+      <div class="soft-card toggle-row">
+        <div>
+          <p class="card-title">Require Face ID to show card numbers</p>
+          <p class="muted small">Your phone checks it before the numbers show. The PIN is used if the phone can't.</p>
+        </div>
+        <button id="faceToggle" class="switch" type="button" aria-pressed="false" aria-label="Require Face ID to show card numbers"><i></i></button>
+      </div>
+
       <div id="ownerCard" class="soft-card owner-card hidden">
         <p class="card-title">Owner tools</p>
         <p id="ownerStatus" class="muted" style="margin:.3rem 0 .7rem"></p>
@@ -287,30 +286,39 @@
       <button id="deleteAccBtn" class="danger-btn" type="button">Delete account</button>
     </section>
 
-    <!-- TAB BAR -->
+    <!-- FLOATING TAB BAR -->
     <nav class="tabbar">
       <button class="tabbtn active" data-tab="home" type="button">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3 3 10.5V20a1 1 0 0 0 1 1h5v-6h6v6h5a1 1 0 0 0 1-1v-9.5z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>
         <span>Home</span>
       </button>
-      <button class="tabbtn" data-tab="pay" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h3"/></svg>
-        <span>Payments</span>
+      <button class="tabbtn" data-tab="scan" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg>
+        <span>Scan</span>
       </button>
-      <button class="tabbtn" data-tab="activity" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
-        <span>Spending</span>
+      <button class="tabbtn" data-tab="analytics" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V12M12 20V5M19 20v-9"/></svg>
+        <span>Analytics</span>
       </button>
-      <button class="tabbtn" data-tab="messages" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z"/></svg>
-        <span>Messages</span>
-        <span id="msgBadge" class="badge hidden">0</span>
+      <button class="tabbtn" data-tab="history" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+        <span>History</span>
       </button>
       <button class="tabbtn" data-tab="account" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
         <span>Account</span>
       </button>
     </nav>
+  </div>
+
+  <!-- FIRST-CARD STEP (covers the app until you have a card) -->
+  <div id="firstGate" class="first-gate hidden">
+    <div class="first-wrap">
+      <svg class="first-mark" viewBox="20 10 176 180"><use href="#sbLogo"/></svg>
+      <h1>Make your first card</h1>
+      <p class="muted">You need a card before you can send, add or pay. Pick a plan and a color. Plain is free, and the Daily plan is $4.99 a day.</p>
+      <button id="firstGateBtn" class="primary wide" type="button">Make my card</button>
+    </div>
   </div>
 
   <!-- Message thread (slides in over everything) -->
@@ -422,26 +430,51 @@
         <div id="rcPersonRow" class="rc-row"><span id="rcPersonLabel">To</span><strong id="rcPerson"></strong></div>
         <div id="rcSentRow" class="rc-row hidden"><span>Amount sent</span><strong id="rcSent"></strong></div>
         <div id="rcFeeRow" class="rc-row hidden"><span>Fee</span><strong id="rcFee"></strong></div>
+        <div id="rcCardRow" class="rc-row hidden"><span>Card</span><strong id="rcCard"></strong></div>
         <div class="rc-row"><span>Reference</span><strong id="rcRef"></strong></div>
         <div class="rc-row"><span>Paid with</span><strong id="rcPaid">SB Wallet balance</strong></div>
       </div>
       <button id="rcMsgBtn" class="secondary hidden" type="button">Message this person</button>
+      <button id="rcReportBtn" class="secondary" type="button">Report a problem</button>
       <button id="rcDelBtn" class="danger-btn" type="button">Delete receipt</button>
       <button id="rcClose" class="primary wide" type="button" style="margin-top:.6rem">Close</button>
+    </div>
+
+    <div id="vReport" class="view hidden">
+      <p class="sheet-title">Report a problem</p>
+      <p class="sheet-sub">Tell us what looks wrong with this receipt. An owner will look at it.</p>
+      <input id="reportNote" aria-label="What is wrong" class="sheet-input" type="text" placeholder="What looks wrong?" maxlength="200" autocomplete="off">
+      <p id="reportError" class="sheet-error"></p>
+      <button id="reportSend" class="primary wide" type="button">Send report</button>
     </div>
 
     <div id="vCardNew" class="view hidden">
       <p id="newTitle" class="sheet-title">New SB Card</p>
       <div id="newPreview" style="margin-top:.9rem"></div>
+      <p class="mini-label"><span>Plan</span><span id="planNote" class="plan-note"></span></p>
+      <div id="planGrid" class="plan-grid"></div>
       <p class="mini-label"><span>Pick a color</span><span id="priceNote">Free</span></p>
       <div id="finGrid" class="fin-grid"></div>
       <input id="cardNick" aria-label="Card name" class="sheet-input" type="text" placeholder="Card name (optional)" maxlength="20" autocomplete="off">
       <button id="issueBtn" class="primary wide" type="button" style="margin-top:.8rem">Issue Card Now</button>
     </div>
 
+    <div id="vCards" class="view hidden">
+      <p class="sheet-title">My cards</p>
+      <p class="sheet-sub">Tap a card to manage it. You can have up to 5.</p>
+      <div id="cardsSheetList" class="cards-sheet-list" style="margin-top:.7rem"></div>
+      <button id="freezeAllBtn" class="secondary" type="button">Freeze all cards</button>
+      <button id="newCardFromSheet" class="primary wide" type="button" style="margin-top:.6rem">+ New card</button>
+    </div>
+
     <div id="vCard" class="view hidden">
       <p id="cvName" class="sheet-title">Card</p>
       <div id="cvCard" style="margin-top:.9rem"></div>
+      <p id="cvStatus" class="card-status"></p>
+      <div id="cvPayBox" class="pay-box hidden">
+        <p id="cvPayText" class="pay-text"></p>
+        <button id="cvPay" class="primary" type="button">Pay</button>
+      </div>
       <div class="timer-line"><i id="cvTimer"></i></div>
       <div class="card-actions">
         <button id="cvReveal" class="chip" type="button">Reveal</button>
@@ -449,13 +482,49 @@
         <button id="cvFreeze" class="chip" type="button">Freeze</button>
       </div>
       <button id="cvUse" class="primary wide" type="button">Use this card</button>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Daily limit</span><span id="cvLimitNow" class="muted"></span></p>
+        <div class="inline-row">
+          <input id="cvLimitInput" aria-label="Daily limit in dollars" class="sheet-input" type="number" inputmode="decimal" min="0" placeholder="0 = no limit">
+          <button id="cvLimitBtn" class="chip" type="button">Save</button>
+        </div>
+      </div>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Only pay this person</span><span id="cvLockNow" class="muted"></span></p>
+        <div class="inline-row">
+          <input id="cvLockInput" aria-label="ID number this card can pay" class="sheet-input" type="text" inputmode="numeric" placeholder="8-digit ID, empty = anyone">
+          <button id="cvLockBtn" class="chip" type="button">Save</button>
+        </div>
+      </div>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Card name</span></p>
+        <div class="inline-row">
+          <input id="cvRename" aria-label="New card name" class="sheet-input" type="text" placeholder="New name" maxlength="20" autocomplete="off">
+          <button id="cvRenameBtn" class="chip" type="button">Save</button>
+        </div>
+      </div>
+
+      <div class="cv-block">
+        <p class="mini-label"><span>Color</span><span class="muted">Owned colors are free to switch</span></p>
+        <div id="cvColors" class="fin-grid small-grid"></div>
+      </div>
+
+      <div class="cv-actions">
+        <button id="cvSingle" class="chip wide-chip" type="button">Single-use: off</button>
+        <button id="cvReissue" class="chip wide-chip" type="button">Reissue number</button>
+      </div>
+      <p id="cvReissueNow" class="muted small center-note"></p>
+
       <button id="cvDelete" class="danger-btn" type="button">Delete card</button>
     </div>
 
     <div id="vNotifs" class="view hidden">
       <p class="sheet-title">Notifications</p>
       <div id="notifList" style="margin-top:.6rem"></div>
-      <div id="notifEmpty" class="empty"><p class="empty-title">All quiet.</p><p class="muted">Money received and new messages show up here.</p></div>
+      <div id="notifEmpty" class="empty"><p class="empty-title">All quiet.</p><p class="muted">Money in, money out and new messages show up here.</p></div>
     </div>
 
     <div id="vDelete" class="view hidden">
@@ -473,10 +542,14 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <!-- QR code maker and reader (for the Scan tab) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
   <script src="logo-data.js"></script>
   <script src="wallet.js"></script>
   <script src="app.js"></script>
   <script src="cards.js"></script>
   <script src="chat.js"></script>
+  <script src="screens.js"></script>
 </body>
 </html>
