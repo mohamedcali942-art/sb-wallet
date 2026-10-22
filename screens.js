@@ -171,6 +171,13 @@
     scanLoop();
   }
 
+  // Scan opens as a sheet (your code on top, the camera reader below)
+  function openScan() {
+    renderMyCode();
+    setScanButton(!!stream);
+    SB.showView("vScan");
+  }
+  $("scanTile").addEventListener("click", openScan);
   $("scanStart").addEventListener("click", function () {
     if (stream) stopScan(); else startScan();
   });
@@ -239,7 +246,10 @@
     recv = Math.round(recv * 100) / 100;
     fees = Math.round(fees * 100) / 100;
 
-    $("donutTotal").textContent = SB.money(Math.round(sent));
+    // Whole dollars, no cents, so the number fits inside the ring
+    var whole = "$" + Math.round(sent).toLocaleString("en-US");
+    $("donutTotal").textContent = whole;
+    $("donutMid").classList.toggle("long", whole.length > 8);
     renderDonut(sent, recv, fees);
 
     var legend = $("legend");
@@ -304,11 +314,11 @@
   SB.on("receipts", renderAnalytics);
   SB.on("tick", renderAnalytics);
   SB.on("tab", function (name) {
-    if (name !== "scan") stopScan();
-    if (name === "scan") renderMyCode();
     if (name === "analytics") renderAnalytics();
   });
-  SB.on("view", function () { /* sheets open over tabs; the camera keeps its place */ });
+  // The camera only runs while the Scan sheet is open
+  SB.on("view", function (name) { if (name !== "vScan") stopScan(); });
+  SB.on("sheetClosed", stopScan);
   SB.on("stop", function () {
     stopScan();
     $("qrBox").innerHTML = "";

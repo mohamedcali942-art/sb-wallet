@@ -654,7 +654,8 @@ window.SBRules = (function () {
       usedUp: false,
       frozen: false,
       freezeReason: null,
-      reissued: FV.increment(1)
+      reissued: FV.increment(1),
+      reissuedAt: stamp()
     }, newExpiry()));
   }
 
@@ -688,6 +689,33 @@ window.SBRules = (function () {
     return userRef(uid).update({ activeCardId: cardId || null });
   }
 
+
+  // ---------- Contacts: people you chose to save (users/{uid}/contacts/{contactUid}) ----------
+  function contactsRef(uid) { return userRef(uid).collection("contacts"); }
+
+  // p: { uid, firstName, lastName, accountId }
+  function saveContact(uid, p) {
+    return contactsRef(uid).doc(p.uid).set({
+      firstName: p.firstName || "",
+      lastName: p.lastName || "",
+      accountId: p.accountId || "",
+      savedAt: stamp()
+    }, { merge: true });
+  }
+
+  function removeContact(uid, contactUid) {
+    return contactsRef(uid).doc(contactUid).delete();
+  }
+
+  // Calls back with a list of { uid, firstName, lastName, accountId, savedAt }
+  function watchContacts(uid, callback) {
+    return contactsRef(uid).onSnapshot(function (snap) {
+      callback(snap.docs.map(function (d) { return Object.assign({ uid: d.id }, d.data()); }));
+    }, function (e) {
+      console.error("contacts", e);
+      callback([]);
+    });
+  }
 
   // ---------- Messages ----------
   function chatId(a, b) { return [a, b].sort().join("_"); }
@@ -750,6 +778,7 @@ window.SBRules = (function () {
     var d = snap.exists ? snap.data() : {};
     await deleteCollection(ref.collection("transactions"));
     await deleteCollection(ref.collection("cards"));
+    await deleteCollection(ref.collection("contacts"));
     var ownerSnap = await ownerRef().get(); // if you are the owner, the owner spot opens up again
     if (ownerSnap.exists && ownerSnap.data().uid === uid) await ownerRef().delete();
     if (d.accountId) await db.collection("ids").doc(d.accountId).delete();
@@ -861,6 +890,7 @@ window.SBRules = (function () {
     watchTransactions: watchTransactions, deleteTransactions: deleteTransactions, deleteAllTransactions: deleteAllTransactions,
     createCard: createCard, watchCards: watchCards, setCardFrozen: setCardFrozen, deleteCard: deleteCard, setActiveCard: setActiveCard,
     chatId: chatId, sendMessage: sendMessage, watchChats: watchChats, watchMessages: watchMessages, markRead: markRead,
+    saveContact: saveContact, removeContact: removeContact, watchContacts: watchContacts,
     checkPassword: checkPassword, deleteAccount: deleteAccount,
     watchOwner: watchOwner, claimOwner: claimOwner, checkFundPassword: checkFundPassword, changeFundPassword: changeFundPassword,
     friendlyError: friendlyError

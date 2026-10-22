@@ -166,7 +166,9 @@
       d1.appendChild(el("span", "bc-val", card.expMonth + "/" + card.expYear));
       var d2 = el("div", "");
       d2.appendChild(el("span", "bc-lab", "CVV"));
-      d2.appendChild(el("span", "bc-cvv", card.cvv));
+      // The CVV stays hidden until "Show number" is pressed (it shows for 10 seconds)
+      var cvv = el("span", "bc-cvv", "•••");
+      d2.appendChild(cvv);
       row.appendChild(d1);
       row.appendChild(d2);
       bk.appendChild(row);
@@ -174,6 +176,7 @@
       back.appendChild(el("p", "bc-note", "SB Wallet fake card. Not real money."));
       inner.appendChild(back);
       root._num = num;
+      root._cvv = cvv;
       attachTilt(root);
     }
 
@@ -182,31 +185,57 @@
     return root;
   }
 
-  // Short status words for a card: what is blocking it, or in use / ready
-  function statusOf(c) {
-    var why = R.lockReason(c, today());
-    if (why) return why;
+  // One status word per card, with a class for its color:
+  // Locked (used once), Frozen, Unpaid day (daily fee or unpaid days), In use, or Ready
+  function cardStatus(c) {
+    if (c.frozen && c.freezeReason === "used") return { text: "Locked", cls: "st-locked" };
+    if (c.frozen) return { text: "Frozen", cls: "st-frozen" };
+    if (R.isCardLocked(c, today())) return { text: "Unpaid day", cls: "st-unpaid" };
     var active = SB.activeCard();
-    if (active && active.id === c.id) return "In use";
-    return "Ready";
+    if (active && active.id === c.id) return { text: "In use", cls: "st-use" };
+    return { text: "Ready", cls: "st-ready" };
   }
 
-  // ---------- Home: the list card of your cards ----------
+  // "Last new number: Oct 22, 2026", or "" if the number was never changed
+  function reissuedText(c) {
+    var d = c.reissuedAt && c.reissuedAt.toDate ? c.reissuedAt.toDate() : null;
+    if (!d) return "";
+    return "Last new number: " + d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  // A small card face for Home: name, brand, last four digits and status
+  function homeTile(c) {
+    var st = cardStatus(c);
+    var b = el("button", "home-tile" + (c.frozen ? " frozen" : ""));
+    b.type = "button";
+    b.setAttribute("aria-label", c.name + ", ending " + c.last4 + ", " + st.text);
+    var face = el("span", "ht-face fin-" + (c.finish || "plain"));
+    var top = el("span", "ht-top");
+    top.appendChild(el("span", "ht-name", c.name));
+    top.appendChild(brandEl(c.brand));
+    var bot = el("span", "ht-bot");
+    bot.appendChild(el("span", "ht-last", "•••• " + c.last4));
+    bot.appendChild(el("span", "ht-status " + st.cls, st.text));
+    face.appendChild(top);
+    face.appendChild(bot);
+    b.appendChild(face);
+    b.addEventListener("click", function () { openCard(c); });
+    return b;
+  }
+
+  // ---------- Home: your cards in a row you can scroll ----------
   function renderHomeList() {
     var list = $("cardList");
     list.innerHTML = "";
-    cards.forEach(function (c) {
-      var b = el("button", "card-row");
-      b.type = "button";
-      b.appendChild(el("span", "q-av sm " + SB.colorClass(c.name), (c.name || "C").charAt(0).toUpperCase()));
-      var info = el("span", "card-row-info");
-      info.appendChild(el("span", "card-row-name", c.name));
-      info.appendChild(el("span", "card-row-sub", "•••• " + c.last4 + " · " + statusOf(c)));
-      b.appendChild(info);
-      b.appendChild(el("span", "card-row-go", "›"));
-      b.addEventListener("click", function () { openCard(c); });
-      list.appendChild(b);
-    });
+    cards.forEach(function (c) { list.appendChild(homeTile(c)); });
+    if (cards.length < MAX_CARDS && cardsReady) {
+      var add = el("button", "home-add");
+      add.type = "button";
+      add.appendChild(el("span", "home-add-plus", "+"));
+      add.appendChild(el("span", "", "New card"));
+      add.addEventListener("click", function () { openNew(false); });
+      list.appendChild(add);
+    }
     var empty = $("cardListEmpty");
     if (empty) empty.classList.toggle("hidden", cards.length > 0 || !cardsReady);
     $("cardsCount").textContent = cards.length ? cards.length + " of " + MAX_CARDS : "";
@@ -227,7 +256,7 @@
       var b = el("button", "card-btn");
       b.type = "button";
       b.appendChild(cardEl(c, { mini: true, badge: !!(active && active.id === c.id) }));
-      b.appendChild(el("span", "card-btn-sub", statusOf(c)));
+      b.appendChild(el("span", "card-btn-sub", cardStatus(c).text));
       b.addEventListener("click", function () { openCard(c); });
       box.appendChild(b);
     });
@@ -385,7 +414,6 @@
     });
   });
 
-  // ===== PART B (card sheet, actions, wiring) follows in _cards_b.js =====
   // ---------- Pay today's fee (daily cards) ----------
   // Pays unpaid days plus today's fee, which unlocks the card. Does nothing if you can't afford it.
   function payCard(c) {
@@ -424,7 +452,10 @@
 
   function maskNumber() {
     revealed = false;
-    if (cardRoot && current) cardRoot._num.textContent = maskedNumber(current);
+    if (cardRoot && current) {
+      cardRoot._num.textContent = maskedNumber(current);
+      cardRoot._cvv.textContent = "•••";
+    }
     updateButtons();
   }
 
@@ -436,9 +467,10 @@
     $("cvUse").textContent = isActive ? "✓ Using this card" : "Use this card";
     $("cvUse").disabled = isActive;
     $("cvUse").classList.toggle("used-btn", isActive);
-    $("cvFreeze").textContent = c.frozen ? "Unfreeze" : "Freeze";
-    $("cvFreeze").classList.toggle("on", !!c.frozen);
+    $("cvReveal").textContent = revealed ? "Hide number" : "Show number";
     $("cvReveal").classList.toggle("on", revealed);
+    $("cvFreeze").textContent = c.frozen ? "Unfreeze card" : "Freeze card";
+    $("cvFreeze").classList.toggle("on", !!c.frozen);
 
     // Status line: what is blocking the card, if anything
     var why = R.lockReason(c, today());
@@ -450,28 +482,39 @@
     $("cvPayBox").classList.toggle("hidden", !payable);
     if (payable) $("cvPayText").textContent = "Pay " + SB.money(R.payDue(c, today())) + " to unlock";
 
-    $("cvSingle").textContent = c.singleUse ? "Single-use: on" : "Single-use: off";
-    $("cvSingle").classList.toggle("on", !!c.singleUse);
-    $("cvLimitNow").textContent = "Limit " + (c.limit ? SB.money(c.limit) + " a day" : "none")
-      + " · spent today " + SB.money(SB.spentToday ? SB.spentToday(c.id) : 0);
-    $("cvLockNow").textContent = c.lockTo ? "Only pays ID " + SB.prettyId(c.lockTo) : "Pays anyone";
-    $("cvReissueNow").textContent = c.reissued ? "Reissued " + c.reissued + (c.reissued === 1 ? " time" : " times") : "Not reissued yet";
+    var single = !!c.singleUse;
+    $("cvSingle").classList.toggle("on", single);
+    $("cvSingle").setAttribute("aria-checked", single ? "true" : "false");
+
+    var spent = SB.spentToday ? SB.spentToday(c.id) : 0;
+    $("cvLimitNow").textContent = "Spent today: " + SB.money(spent);
+    $("cvLockNow").textContent = c.lockTo ? "Now: only ID " + SB.prettyId(c.lockTo) : "Now: anyone";
+    var re = reissuedText(c);
+    $("cvReissueNow").textContent = re;
+    $("cvReissueNow").classList.toggle("hidden", !re);
     buildCardColors();
     $("cvDelete")._reset();
   }
 
-  // The colors row: tap a color you own to switch to it, tap one you don't own to buy it
+  // The colors row. Owned colors show a check mark. The selected one is ringed and says "In use".
+  // Tap an owned color to switch to it. Tap one you don't own to buy it.
   function buildCardColors() {
     var box = $("cvColors");
     box.innerHTML = "";
     if (!current) return;
     FINISHES.forEach(function (f) {
       var owned = Wallet.ownsFinish(current, f.id);
-      var b = el("button", "fin-opt" + (current.finish === f.id ? " sel" : "") + (owned ? "" : " locked"));
+      var selected = current.finish === f.id;
+      var b = el("button", "fin-opt" + (selected ? " sel" : "") + (owned ? "" : " locked"));
       b.type = "button";
-      b.setAttribute("aria-label", f.label + (owned ? "" : ", buy for " + SB.money(colorPrice(f.id))));
-      b.appendChild(el("span", "fin-dot fin-" + f.id));
-      b.appendChild(el("span", "", owned ? f.short : SB.money(colorPrice(f.id)) ));
+      var word = selected ? "In use" : owned ? "Owned" : (isOwner() ? "Free" : SB.money(Wallet.prices.color));
+      b.setAttribute("aria-label", f.label + ": " + (selected ? "in use" : owned ? "owned" : "costs " + word));
+      var sw = el("span", "fin-swatch");
+      sw.appendChild(el("span", "fin-dot fin-" + f.id));
+      if (owned) sw.appendChild(el("span", "fin-check", "✓"));
+      b.appendChild(sw);
+      b.appendChild(el("span", "fin-name", f.short));
+      b.appendChild(el("span", "fin-price" + (word === "Free" ? " free" : selected ? " now" : ""), word));
       b.addEventListener("click", function () { changeColor(f); });
       box.appendChild(b);
     });
@@ -557,6 +600,7 @@
     if (!current || !cardRoot) return;
     revealed = true;
     cardRoot._num.textContent = fullNumber(current);
+    cardRoot._cvv.textContent = current.cvv;
     updateButtons();
     setFlipped(true); // the numbers are on the back, so show the back
     var ok = await SB.copyText(current.number);

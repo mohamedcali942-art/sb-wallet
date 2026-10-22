@@ -526,40 +526,6 @@
     return row;
   }
 
-  function quickItem(letter, label, dashed, onTap) {
-    var b = document.createElement("button");
-    b.type = "button";
-    b.className = "q-item";
-    var av = document.createElement("span");
-    av.className = "q-av " + (dashed ? "dashed" : colorClass(letter));
-    av.textContent = letter;
-    var name = document.createElement("span");
-    name.textContent = label;
-    b.appendChild(av);
-    b.appendChild(name);
-    b.addEventListener("click", onTap);
-    return b;
-  }
-
-  function renderQuick(list) {
-    ["quickRowHome"].forEach(function (id) {
-      var row = $(id);
-      row.innerHTML = "";
-      row.appendChild(quickItem("+", "Add New", true, function () { startSend(); }));
-      var seen = {};
-      var count = 0;
-      list.forEach(function (t) {
-        var u = t.counterpartAccountId;
-        if (t.type === "send" && u && !seen[u] && count < 5) {
-          seen[u] = true;
-          count++;
-          var first = (t.counterpartName || "Someone").split(" ")[0];
-          row.appendChild(quickItem(first.charAt(0).toUpperCase(), first, false, function () { startSend(u); }));
-        }
-      });
-    });
-  }
-
   function renderTxns() {
     var list = txns.filter(function (t) { return !expired(t); });
 
@@ -592,9 +558,8 @@
     var inToday = list.reduce(function (sum, t) {
       return (t.amount > 0 && keyOfDate(dateOf(t)) === today) ? sum + t.amount : sum;
     }, 0);
-    $("todayPill").textContent = "+ " + money(Math.round(inToday * 100) / 100) + " today";
+    $("todayPill").textContent = "In today: " + money(Math.round(inToday * 100) / 100);
 
-    renderQuick(list);
     SB.emit("receipts", list);
   }
 
@@ -634,7 +599,7 @@
   var personResolve = null;
   var funding = false; // true while a Fund / Send / card step is in progress
 
-  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vCards", "vNotifs", "vDelete", "vFundPw", "vOwner", "vReport"];
+  var VIEWS = ["vSearch", "vAmount", "vPin", "vBusy", "vReceipt", "vCardNew", "vCard", "vCards", "vNotifs", "vDelete", "vFundPw", "vOwner", "vReport", "vScan"];
   var HIGH = ["vSearch", "vDelete", "vCardNew", "vFundPw", "vOwner", "vReport"]; // these have typing, so they sit high (keyboard won't cover them)
 
   var sheetToken = 0;
@@ -1144,12 +1109,141 @@
       $("findBtn").textContent = "Find";
       $("findBtn").disabled = false;
       personResolve = resolve;
+      updateSaveBtn();
       showView("vSearch");
       if (prefill) findPerson(true);
       else $("userInput").focus({ preventScroll: true });
     });
   }
   SB.askPerson = askPerson;
+
+  // ---------- Contacts: people you chose to save (users/{uid}/contacts) ----------
+  var contacts = [];
+  var contactIds = {};
+  var stopContacts = null;
+
+  function contactFromPerson(p) {
+    return { uid: p.uid, firstName: p.firstName || "", lastName: p.lastName || "", accountId: p.accountId || "" };
+  }
+  function isSaved(uid) { return !!contactIds[uid]; }
+
+  function saveContactFor(p) {
+    if (!SB.state.uid || !p || isSaved(p.uid)) return;
+    Wallet.saveContact(SB.state.uid, contactFromPerson(p)).then(function () {
+      toast(p.firstName + " is in your contacts");
+    }, function (e) { toast(Wallet.friendlyError(e)); });
+  }
+
+  function removeContact(c) {
+    Wallet.removeContact(SB.state.uid, c.uid).then(function () {
+      toast("Removed from your contacts");
+    }, function (e) { toast(Wallet.friendlyError(e)); });
+  }
+
+  // Tapping a contact fills the ID box and goes on as if the ID had been typed
+  function useContact(c) {
+    if (!personResolve) return;
+    $("userInput").value = c.accountId;
+    findPerson(true);
+  }
+
+  function renderContacts() {
+    var box = $("contactList");
+    box.innerHTML = "";
+    contacts.forEach(function (c) {
+      var row = document.createElement("div");
+      row.className = "contact-row";
+
+      var go = document.createElement("button");
+      go.type = "button";
+      go.className = "contact-go";
+      var av = document.createElement("span");
+      av.className = "q-av sm " + colorClass(c.firstName);
+      av.textContent = (c.firstName || "?").charAt(0).toUpperCase();
+      var info = document.createElement("span");
+      info.className = "contact-info";
+      var nm = document.createElement("span");
+      nm.className = "contact-name";
+      nm.textContent = fullName(c);
+      var idTxt = document.createElement("span");
+      idTxt.className = "contact-id";
+      idTxt.textContent = prettyId(c.accountId);
+      info.appendChild(nm);
+      info.appendChild(idTxt);
+      go.appendChild(av);
+      go.appendChild(info);
+      go.addEventListener("click", function () { useContact(c); });
+
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "contact-rm";
+      rm.textContent = "Remove";
+      rm.setAttribute("aria-label", "Remove " + fullName(c) + " from your contacts");
+      rm.addEventListener("click", function () { removeContact(c); });
+
+      row.appendChild(go);
+      row.appendChild(rm);
+      box.appendChild(row);
+    });
+    $("contactEmpty").classList.toggle("hidden", contacts.length > 0);
+  }
+
+  // The Save contact button under a person found in the Send or Request sheet
+  function updateSaveBtn() {
+    var btn = $("saveContactBtn");
+    var show = !!foundPerson && !!personResolve;
+    btn.classList.toggle("hidden", !show);
+    var saved = show && isSaved(foundPerson.uid);
+    btn.textContent = saved ? "In your contacts ✓" : "Save contact";
+    btn.disabled = saved;
+  }
+
+  // The Save contact button on a receipt, when the other person is known
+  function updateRcSave() {
+    var t = openTxn;
+    var btn = $("rcSaveBtn");
+    var can = !!(t && t.counterpartUid && t.counterpartUid !== SB.state.uid);
+    btn.classList.toggle("hidden", !can);
+    if (!can) return;
+    var saved = isSaved(t.counterpartUid);
+    btn.textContent = saved ? "In your contacts ✓" : "Save contact";
+    btn.disabled = saved;
+  }
+
+  $("saveContactBtn").addEventListener("click", function () {
+    if (foundPerson) saveContactFor(foundPerson);
+  });
+  $("rcSaveBtn").addEventListener("click", function () {
+    var t = openTxn;
+    if (!t || !t.counterpartUid) return;
+    var parts = (t.counterpartName || "").trim().split(" ");
+    saveContactFor({
+      uid: t.counterpartUid,
+      firstName: parts[0] || "Someone",
+      lastName: parts.slice(1).join(" "),
+      accountId: t.counterpartAccountId || ""
+    });
+  });
+
+  function startContactsWatch(user) {
+    contacts = [];
+    contactIds = {};
+    stopContacts = Wallet.watchContacts(user.uid, function (list) {
+      contacts = list.slice().sort(function (a, b) { return fullName(a).localeCompare(fullName(b)); });
+      contactIds = {};
+      contacts.forEach(function (c) { contactIds[c.uid] = true; });
+      renderContacts();
+      updateSaveBtn();
+      updateRcSave();
+    });
+  }
+
+  function stopContactsWatch() {
+    if (stopContacts) { stopContacts(); stopContacts = null; }
+    contacts = [];
+    contactIds = {};
+    renderContacts();
+  }
 
   async function findPerson(autoContinue) {
     var text = $("userInput").value.trim();
@@ -1178,6 +1272,7 @@
         $("foundCard").classList.remove("hidden");
         $("findBtn").textContent = $("findBtn").dataset.next || "Continue";
         $("findBtn").disabled = false;
+        updateSaveBtn();
         if (autoContinue) pickPerson();
         return;
       }
@@ -1206,6 +1301,7 @@
     $("searchError").textContent = "";
     $("findBtn").textContent = "Find";
     $("findBtn").disabled = false;
+    updateSaveBtn();
   });
   $("userInput").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); $("findBtn").click(); }
@@ -1447,6 +1543,7 @@
     var hasPerson = !!t.counterpartUid;
     $("rcPersonRow").classList.toggle("hidden", !hasPerson);
     $("rcMsgBtn").classList.toggle("hidden", !hasPerson);
+    updateRcSave();
     if (hasPerson) {
       $("rcPersonLabel").textContent = neg ? "To" : "From";
       $("rcPerson").textContent = (t.counterpartName || "") + (t.counterpartAccountId ? " (ID " + prettyId(t.counterpartAccountId) + ")" : "");
@@ -1503,7 +1600,6 @@
   // ---------- Buttons that start things ----------
   $("fundTile").addEventListener("click", startFund);
   $("sendTile").addEventListener("click", function () { startSend(); });
-  $("menuBtn").addEventListener("click", function () { switchTab("account"); });
   $("homeFreezeAll").addEventListener("click", function () { $("freezeAllBtn").click(); });
 
   async function copyMyId() {
@@ -1648,6 +1744,7 @@
     if (stopTxns) { stopTxns(); stopTxns = null; }
     if (stopOwner) { stopOwner(); stopOwner = null; }
     if (stopRequests) { stopRequests(); stopRequests = null; }
+    stopContactsWatch();
     requests = [];
     renderRequests();
     SB.state.owner = null;
@@ -1767,6 +1864,7 @@
     });
 
     startRequestsWatch(user);
+    startContactsWatch(user);
     SB.state.feeOwner = null;
     Wallet.feeOwner().then(function (uid) {
       SB.state.feeOwner = uid;

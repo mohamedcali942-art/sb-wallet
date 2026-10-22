@@ -97,9 +97,6 @@
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
             <span id="bellBadge" class="badge hidden">0</span>
           </button>
-          <button id="menuBtn" class="round-btn" type="button" aria-label="Account">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M4 12h16M4 17h7"/></svg>
-          </button>
         </div>
       </header>
 
@@ -107,12 +104,12 @@
         <p class="hero-label">Your total balance</p>
         <p id="balance" class="hero-balance">$0.00</p>
         <div class="hero-pills">
-          <span class="pill-chip" id="todayPill">+ $0.00 today</span>
+          <span class="pill-chip" id="todayPill">In today: $0.00</span>
           <span class="pill-chip" id="heroCards">0 cards</span>
         </div>
       </div>
 
-      <div class="acts3">
+      <div class="acts4">
         <button class="act3" id="requestTile" type="button">
           <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M15 17H7V9"/></svg></span>
           <span>Request</span>
@@ -125,6 +122,10 @@
           <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span>
           <span>Send</span>
         </button>
+        <button class="act3" id="scanTile" type="button">
+          <span class="act3-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg></span>
+          <span>Scan</span>
+        </button>
       </div>
 
       <div id="lockBanners" class="lock-banners"></div>
@@ -134,7 +135,7 @@
           <p class="card-title">My Cards</p>
           <button id="seeAllCards" class="link-btn" type="button">See All</button>
         </div>
-        <div id="cardList" class="card-list"></div>
+        <div id="cardList" class="cards-row"></div>
         <p id="cardListEmpty" class="muted small list-empty hidden">No cards yet. Make your first one.</p>
         <div class="list-foot">
           <span id="cardsCount" class="muted small"></span>
@@ -150,13 +151,6 @@
         <div id="reqEmpty" class="empty">
           <p class="muted">Money you ask for, and money people ask you for, shows up here.</p>
         </div>
-      </div>
-
-      <div class="list-card">
-        <div class="list-head">
-          <p class="card-title">Quick Send</p>
-        </div>
-        <div id="quickRowHome" class="quick"></div>
       </div>
 
       <div class="list-card">
@@ -180,28 +174,10 @@
       </div>
     </section>
 
-    <!-- SCAN -->
-    <section id="tab-scan" class="tab">
-      <header class="page-top"><h2>Scan</h2></header>
-
-      <div class="list-card center-card">
-        <p class="card-title">Your ID number</p>
-        <p class="muted small">Let someone scan this to send you money.</p>
-        <div id="qrBox" class="qr-box"></div>
-        <p id="myIdText" class="handle">—</p>
-        <button id="scanCopy" class="copy" type="button">Copy</button>
-      </div>
-
-      <div class="list-card center-card">
-        <p class="card-title">Scan a code</p>
-        <p class="muted small">Point the camera at someone's SB Wallet code.</p>
-        <div class="scan-frame">
-          <video id="scanVideo" playsinline muted></video>
-          <canvas id="scanCanvas" hidden></canvas>
-        </div>
-        <p id="scanMsg" class="muted small scan-msg"></p>
-        <button id="scanStart" class="primary wide" type="button">Open camera</button>
-      </div>
+    <!-- STOCKS (placeholder: the owner will give instructions later) -->
+    <section id="tab-stocks" class="tab">
+      <header class="page-top"><h2>Stocks</h2></header>
+      <p class="muted stocks-soon">Coming soon.</p>
     </section>
 
     <!-- ANALYTICS -->
@@ -213,7 +189,7 @@
         <div class="donut-wrap">
           <div class="donut">
             <svg viewBox="0 0 100 100" id="donutSvg"></svg>
-            <div class="donut-mid"><b id="donutTotal">$0</b><span>sent</span></div>
+            <div id="donutMid" class="donut-mid"><b id="donutTotal">$0</b><span>sent</span></div>
           </div>
           <div id="legend" class="legend"></div>
         </div>
@@ -292,9 +268,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>
         <span>Home</span>
       </button>
-      <button class="tabbtn" data-tab="scan" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></svg>
-        <span>Scan</span>
+      <button class="tabbtn" data-tab="stocks" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5 9.5 11l3.5 3.5L20 7.5"/><path d="M15 7.5h5v5"/></svg>
+        <span>Stocks</span>
       </button>
       <button class="tabbtn" data-tab="analytics" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V12M12 20V5M19 20v-9"/></svg>
@@ -357,11 +333,19 @@
       <p id="searchSub" class="sheet-sub">Type the 8-digit ID number of someone with an SB Wallet account.</p>
       <input id="userInput" aria-label="ID number" class="sheet-input" type="text" inputmode="numeric" placeholder="8-digit ID number, like 4821 3907" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off">
       <p id="searchError" class="sheet-error"></p>
+
+      <div class="contacts-box">
+        <p class="mini-label"><span>Your contacts</span></p>
+        <div id="contactList" class="contact-list"></div>
+        <p id="contactEmpty" class="muted small contact-empty">Save people you send money to, and they'll show up here.</p>
+      </div>
+
       <div id="foundCard" class="found hidden">
         <div id="foundAv" class="q-av sm c1">?</div>
         <div><p id="foundName" class="who-name"></p><p id="foundUser" class="muted small"></p></div>
         <span class="found-ok">Real account ✓</span>
       </div>
+      <button id="saveContactBtn" class="secondary hidden" type="button">Save contact</button>
       <button id="findBtn" class="primary wide" type="button">Find</button>
     </div>
 
@@ -435,6 +419,7 @@
         <div class="rc-row"><span>Paid with</span><strong id="rcPaid">SB Wallet balance</strong></div>
       </div>
       <button id="rcMsgBtn" class="secondary hidden" type="button">Message this person</button>
+      <button id="rcSaveBtn" class="secondary hidden" type="button">Save contact</button>
       <button id="rcReportBtn" class="secondary" type="button">Report a problem</button>
       <button id="rcDelBtn" class="danger-btn" type="button">Delete receipt</button>
       <button id="rcClose" class="primary wide" type="button" style="margin-top:.6rem">Close</button>
@@ -472,16 +457,31 @@
       <div id="cvCard" style="margin-top:.9rem"></div>
       <p id="cvStatus" class="card-status"></p>
       <div id="cvPayBox" class="pay-box hidden">
-        <p id="cvPayText" class="pay-text"></p>
+        <div class="pay-info">
+          <p id="cvPayText" class="pay-text"></p>
+          <p class="ctl-help">Pays the unpaid days and today's fee, so the card unlocks.</p>
+        </div>
         <button id="cvPay" class="primary" type="button">Pay</button>
       </div>
       <div class="timer-line"><i id="cvTimer"></i></div>
-      <div class="card-actions">
-        <button id="cvReveal" class="chip" type="button">Reveal</button>
-        <button id="cvFlip" class="chip" type="button">Flip</button>
-        <button id="cvFreeze" class="chip" type="button">Freeze</button>
+
+      <div class="ctl-list">
+        <div class="ctl-row">
+          <button id="cvReveal" class="chip ctl-btn" type="button">Show number</button>
+          <p class="ctl-help">Shows the full card number and CVV for 10 seconds.</p>
+        </div>
+        <div class="ctl-row">
+          <button id="cvFlip" class="chip ctl-btn" type="button">Turn card over</button>
+          <p class="ctl-help">Shows the back of the card.</p>
+        </div>
+        <div class="ctl-row">
+          <button id="cvFreeze" class="chip ctl-btn" type="button">Freeze card</button>
+          <p class="ctl-help">Stops all payments from this card until you unfreeze it.</p>
+        </div>
       </div>
-      <button id="cvUse" class="primary wide" type="button">Use this card</button>
+
+      <button id="cvUse" class="primary wide" type="button" style="margin-top:1rem">Use this card</button>
+      <p class="ctl-help center">Payments use this card unless you pick another.</p>
 
       <div class="cv-block">
         <p class="mini-label"><span>Daily limit</span><span id="cvLimitNow" class="muted"></span></p>
@@ -489,14 +489,16 @@
           <input id="cvLimitInput" aria-label="Daily limit in dollars" class="sheet-input" type="number" inputmode="decimal" min="0" placeholder="0 = no limit">
           <button id="cvLimitBtn" class="chip" type="button">Save</button>
         </div>
+        <p class="ctl-help">The most this card can spend in one day. 0 means no limit.</p>
       </div>
 
       <div class="cv-block">
         <p class="mini-label"><span>Only pay this person</span><span id="cvLockNow" class="muted"></span></p>
         <div class="inline-row">
-          <input id="cvLockInput" aria-label="ID number this card can pay" class="sheet-input" type="text" inputmode="numeric" placeholder="8-digit ID, empty = anyone">
+          <input id="cvLockInput" aria-label="ID number this card can pay" class="sheet-input" type="text" inputmode="numeric" placeholder="8-digit ID number">
           <button id="cvLockBtn" class="chip" type="button">Save</button>
         </div>
+        <p class="ctl-help">Restrict this card so it can only pay one account. Leave empty to allow anyone.</p>
       </div>
 
       <div class="cv-block">
@@ -505,20 +507,59 @@
           <input id="cvRename" aria-label="New card name" class="sheet-input" type="text" placeholder="New name" maxlength="20" autocomplete="off">
           <button id="cvRenameBtn" class="chip" type="button">Save</button>
         </div>
+        <p class="ctl-help">Changes the name shown on this card.</p>
       </div>
 
       <div class="cv-block">
-        <p class="mini-label"><span>Color</span><span class="muted">Owned colors are free to switch</span></p>
+        <p class="mini-label"><span>Color</span><span class="muted">Colors you own switch for free.</span></p>
         <div id="cvColors" class="fin-grid small-grid"></div>
+        <p class="ctl-help">Tap a color to switch to it. A color you don't own costs $2 (free for the owner).</p>
       </div>
 
-      <div class="cv-actions">
-        <button id="cvSingle" class="chip wide-chip" type="button">Single-use: off</button>
-        <button id="cvReissue" class="chip wide-chip" type="button">Reissue number</button>
+      <div class="cv-block">
+        <div class="tg-row">
+          <p class="tg-title">Single-use card</p>
+          <button id="cvSingle" class="switch" type="button" role="switch" aria-checked="false" aria-label="Single-use card"><i></i></button>
+        </div>
+        <p class="ctl-help">The card freezes itself after one payment.</p>
       </div>
-      <p id="cvReissueNow" class="muted small center-note"></p>
 
-      <button id="cvDelete" class="danger-btn" type="button">Delete card</button>
+      <div class="cv-block">
+        <div class="ctl-row">
+          <button id="cvReissue" class="chip ctl-btn" type="button">Reissue number</button>
+          <p class="ctl-help">Gives the card a new number and CVV. The old numbers stop working.</p>
+        </div>
+        <p id="cvReissueNow" class="muted small ctl-date hidden"></p>
+      </div>
+
+      <div class="cv-block">
+        <button id="cvDelete" class="danger-btn" type="button" style="margin-top:0">Delete card</button>
+        <p class="ctl-help center">Removes this card. Past payments stay in History.</p>
+      </div>
+    </div>
+
+    <div id="vScan" class="view hidden">
+      <p class="sheet-title">Scan</p>
+      <p class="sheet-sub">Show your ID code, or scan someone else's.</p>
+
+      <div class="list-card center-card">
+        <p class="card-title">Your ID number</p>
+        <p class="muted small">Let someone scan this to send you money.</p>
+        <div id="qrBox" class="qr-box"></div>
+        <p id="myIdText" class="handle">—</p>
+        <button id="scanCopy" class="copy" type="button">Copy</button>
+      </div>
+
+      <div class="list-card center-card">
+        <p class="card-title">Scan a code</p>
+        <p class="muted small">Point the camera at someone's SB Wallet code.</p>
+        <div class="scan-frame">
+          <video id="scanVideo" playsinline muted></video>
+          <canvas id="scanCanvas" hidden></canvas>
+        </div>
+        <p id="scanMsg" class="muted small scan-msg"></p>
+        <button id="scanStart" class="primary wide" type="button">Open camera</button>
+      </div>
     </div>
 
     <div id="vNotifs" class="view hidden">
