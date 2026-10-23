@@ -1,7 +1,9 @@
-// wallet.js — SB Wallet: talks to Firebase (accounts, ID numbers, money, fees, requests, cards, messages).
-// FAKE money only. Uses the "compat" Firebase scripts loaded in index.html.
+// wallet.js: SB Wallet's data layer. Talks to Firebase for accounts, ID numbers, money, fees,
+// requests, cards, contacts and messages. FAKE money only.
+// Uses the "compat" Firebase scripts loaded in index.html.
+// Stocks are NOT here: they live in stocks.js.
 
-// Pure card rules (no Firebase in here, so they can be checked in node). Used by wallet.js and app.js.
+// ---------- Pure card rules (no Firebase, so they can be checked on their own) ----------
 window.SBRules = (function () {
   var DAILY_FEE = 4.99;
 
@@ -62,6 +64,7 @@ window.SBRules = (function () {
     isCardLocked: isCardLocked, lockReason: lockReason
   };
 })();
+
 (function () {
   // If the Firebase scripts did not load (no internet), tell app.js
   if (typeof firebase === "undefined") {
@@ -88,8 +91,13 @@ window.SBRules = (function () {
   try { db.enablePersistence({ synchronizeTabs: true }).catch(function () {}); } catch (e) {}
 
   var FV = firebase.firestore.FieldValue;
+  var R = window.SBRules;
+  var DAILY_FEE = R.DAILY_FEE;
+
   function stamp() { return FV.serverTimestamp(); }
   function userRef(uid) { return db.collection("users").doc(uid); }
+  function round2(n) { return Math.round(n * 100) / 100; }
+  function fullName(p) { return ((p.firstName || "") + " " + (p.lastName || "")).trim(); }
 
   // Every new account starts with this much FAKE money
   var STARTING_BALANCE = 100;
@@ -97,14 +105,9 @@ window.SBRules = (function () {
   // Every fee, card payment and color purchase is paid to this account (looked up by its ID number)
   var FEE_OWNER_ID = "90814079";
 
-  function round2(n) { return Math.round(n * 100) / 100; }
-  function fullName(p) { return ((p.firstName || "") + " " + (p.lastName || "")).trim(); }
-
   // Today's date as 2026-10-12 (used for the spending charts)
-  function dayKey() {
-    var d = new Date();
-    return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
-  }
+  function dayKey() { return R.todayKey(); }
+
   // Adds numbers to today's chart totals, e.g. { sent: 20, fee: 0.3 }
   function statsPatch(patch, into) {
     Object.keys(patch).forEach(function (k) {
@@ -112,6 +115,8 @@ window.SBRules = (function () {
     });
     return into;
   }
+
+  // A short random reference code for each receipt
   function makeRef() {
     var chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     var out = "";
@@ -437,8 +442,6 @@ window.SBRules = (function () {
   // Plans: "daily" costs $4.99 a day (unpaid days build up as debt and lock the card),
   // "forever" costs $9.99 once. The owner's cards are always "forever" and cost nothing.
   // Each color costs $2 per card. Plain (no color) is free. Fees, plans and colors go to the owner.
-  var R = window.SBRules;
-  var DAILY_FEE = R.DAILY_FEE;
   var FOREVER_PRICE = 9.99;
   var COLOR_PRICE = 2;
 
@@ -689,7 +692,6 @@ window.SBRules = (function () {
     return userRef(uid).update({ activeCardId: cardId || null });
   }
 
-
   // ---------- Contacts: people you chose to save (users/{uid}/contacts/{contactUid}) ----------
   function contactsRef(uid) { return userRef(uid).collection("contacts"); }
 
@@ -875,211 +877,32 @@ window.SBRules = (function () {
     return map[err.code] || err.message || "Something went wrong. Try again.";
   }
 
-  // ---------- Stocks: 5 made-up stocks ----------
-  // Prices move while the app is open (once a minute, shared by everyone watching).
-  // When nobody is in the app, nothing moves. The next person to open it gets caught up.
-  var STOCK_TICK_MS = 60 * 1000;   // one normal price move per minute
-  var STOCK_MAX_CATCHUP = 240;     // at most 4 hours of moves are added when you open the app
-  var STOCK_SPREAD = 0.02;         // you buy 2% above the price and sell 2% below it
-  var STOCK_HISTORY = 480;         // how many points the chart keeps
-  var STOCK_SHARES = 100000;       // total shares in each company. Company value = price x shares
-  // drift = the stock's usual direction each minute (some stocks do better than others)
-  // vol   = how wild it is each minute (higher = bumpier)
-  var STOCK_SEED = [
-    { id: "NVLB", name: "Nova Labs",      price: 10, base: 10, drift: 0.00020,  vol: 0.0015 },
-    { id: "BFEN", name: "Bluefin Energy", price: 10, base: 10, drift: 0.00005,  vol: 0.0010 },
-    { id: "ZNTH", name: "Zenith Motors",  price: 10, base: 10, drift: 0.00000,  vol: 0.0020 },
-    { id: "KLPF", name: "Kelp Foods",     price: 10, base: 10, drift: -0.00010, vol: 0.0012 },
-    { id: "TDAL", name: "Tidal Air",      price: 10, base: 10, drift: -0.00015, vol: 0.0014 }
-  ];
-
-  function round4(n) { return Math.round(n * 10000) / 10000; }
-  function stockBuyPrice(p) { return p * (1 + STOCK_SPREAD); }
-  function stockSellPrice(p) { return p * (1 - STOCK_SPREAD); }
-  // A trade moves the price by about half its size compared to the whole company's value.
-  // So $3,000 into a $1,000,000 company moves the price about 0.15%, and $200,000 moves it about 10%.
-  function tradeImpact(amount, price) {
-    var companyValue = price * STOCK_SHARES;
-    return Math.min(0.25, 0.5 * amount / companyValue);
+  // ---------- SB Bank: the card, savings and loans live on the user record (field "bank") ----------
+  // Live view of the balance and the bank record
+  function watchBank(uid, callback) {
+    return userRef(uid).onSnapshot(function (snap) {
+      var d = snap.data() || {};
+      callback({ balance: d.balance || 0, bank: d.bank || null });
+    });
   }
-
-  // Creates any missing stock (only the first person to open the app does this)
-  async function ensureStocks() {
-    for (var i = 0; i < STOCK_SEED.length; i++) {
-      var s = STOCK_SEED[i];
-      var ref = db.collection("stocks").doc(s.id);
-      await db.runTransaction(async function (tx) {
-        var snap = await tx.get(ref);
-        if (snap.exists) return;
-        tx.set(ref, {
-          name: s.name, price: s.price, base: s.base, drift: s.drift, vol: s.vol,
-          hist: [s.price], lastTick: Date.now()
-        });
-      });
-    }
-  }
-
-  // One price move, random but pulled gently back toward the starting price
-  function nextPrice(p, base, drift, vol) {
-    var noise = (Math.random() * 2 - 1) * vol;
-    var pull = ((base - p) / base) * 0.0002; // weak pull back to the start, so good stocks can keep growing
-    var move = Math.max(-0.015, Math.min(0.015, drift + noise + pull));
-    return Math.max(0.5, p * (1 + move));
-  }
-
-  // Adds the missed moves to each stock (catch-up). Safe to run from many phones at once.
-  function tickOne(ref) {
+  // mutate(cur) gets { balance, bank } and returns the new { balance, bank }, or null when nothing changed.
+  // It must be pure, because Firestore may run it again when the record changes underneath it.
+  function bankTx(uid, mutate) {
+    var ref = userRef(uid);
     return db.runTransaction(async function (tx) {
       var snap = await tx.get(ref);
-      if (!snap.exists) return;
+      if (!snap.exists) throw new Error("Your account wasn't found. Log in again.");
       var d = snap.data();
-      var now = Date.now();
-      var last = d.lastTick || now;
-      var steps = Math.min(STOCK_MAX_CATCHUP, Math.floor((now - last) / STOCK_TICK_MS));
-      if (steps < 1) return;
-      var p = d.price;
-      var hist = (d.hist || []).slice();
-      for (var i = 0; i < steps; i++) {
-        p = nextPrice(p, d.base, d.drift, d.vol);
-        hist.push(round4(p));
-      }
-      if (hist.length > STOCK_HISTORY) hist = hist.slice(-STOCK_HISTORY);
-      tx.update(ref, { price: round4(p), hist: hist, lastTick: last + steps * STOCK_TICK_MS });
+      var cur = { balance: d.balance || 0, bank: d.bank || null };
+      var out = mutate(cur);
+      if (!out) return cur;
+      tx.update(ref, { balance: round2(out.balance), bank: out.bank });
+      return out;
     });
-  }
-  async function tickStocks() {
-    await Promise.all(STOCK_SEED.map(function (s) {
-      return tickOne(db.collection("stocks").doc(s.id));
-    }));
-  }
-
-  function watchStocks(callback) {
-    return db.collection("stocks").onSnapshot(function (snap) {
-      var docs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
-      docs.sort(function (a, b) {
-        return STOCK_SEED.findIndex(function (s) { return s.id === a.id; }) -
-               STOCK_SEED.findIndex(function (s) { return s.id === b.id; });
-      });
-      callback(docs);
-    }, function (err) { console.error(err); });
-  }
-
-  // Your shares: { NVLB: { shares, cost }, ... }
-  function watchHoldings(uid, callback) {
-    return userRef(uid).collection("holdings").onSnapshot(function (snap) {
-      var map = {};
-      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
-      callback(map);
-    }, function (err) { console.error(err); });
-  }
-
-  // Buy: spend `amount` (the fee is paid on top). Moves the price up a little.
-  async function buyStock(uid, symbol, amount, fee, ownerUid) {
-    amount = round2(amount);
-    fee = round2(fee || 0);
-    if (!ownerUid || ownerUid === uid) fee = 0;
-    var total = round2(amount + fee);
-    var uRef = userRef(uid);
-    var sRef = db.collection("stocks").doc(symbol);
-    var hRef = uRef.collection("holdings").doc(symbol);
-    var oRef = fee > 0 ? userRef(ownerUid) : null;
-    var txRef = uRef.collection("transactions").doc();
-    var oTx = oRef ? oRef.collection("transactions").doc() : null;
-    var feesRef = db.collection("config").doc("fees");
-    var ref = makeRef();
-
-    await db.runTransaction(async function (tx) {
-      var uSnap = await tx.get(uRef);
-      var sSnap = await tx.get(sRef);
-      var hSnap = await tx.get(hRef);
-      var oSnap = oRef ? await tx.get(oRef) : null;
-      if (!uSnap.exists) throw new Error("Your account wasn't found.");
-      if (!sSnap.exists) throw new Error("That stock isn't available right now.");
-      if (fee > 0 && !oSnap.exists) throw new Error("The fee account isn't set up yet.");
-
-      var u = uSnap.data();
-      if ((u.balance || 0) < total) throw new Error("You don't have enough money for that.");
-      var s = sSnap.data();
-      var buyAt = stockBuyPrice(s.price);
-      var shares = amount / buyAt;
-      var h = hSnap.exists ? hSnap.data() : { shares: 0, cost: 0 };
-      var newPrice = s.price * (1 + tradeImpact(amount, s.price));
-      var hist = (s.hist || []).concat([round4(newPrice)]).slice(-STOCK_HISTORY);
-
-      tx.update(uRef, { balance: round2((u.balance || 0) - total) });
-      if (oRef) {
-        tx.update(oRef, { balance: round2((oSnap.data().balance || 0) + fee) });
-        tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
-        tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
-      }
-      tx.set(hRef, { shares: round4((h.shares || 0) + shares), cost: round2((h.cost || 0) + total) });
-      tx.update(sRef, { price: round4(newPrice), hist: hist });
-      tx.set(txRef, {
-        type: "stock_buy", title: "Bought " + s.name, amount: -total, fee: fee,
-        symbol: symbol, shares: round4(shares), pricePer: round4(buyAt), ref: ref, createdAt: stamp()
-      });
-    });
-    return ref;
-  }
-
-  // Sell: `amount` is the dollar value you sell at the sell price. The fee comes out of what you get.
-  async function sellStock(uid, symbol, amount, fee, ownerUid) {
-    amount = round2(amount);
-    fee = round2(fee || 0);
-    if (!ownerUid || ownerUid === uid) fee = 0;
-    var receive = round2(amount - fee);
-    var uRef = userRef(uid);
-    var sRef = db.collection("stocks").doc(symbol);
-    var hRef = uRef.collection("holdings").doc(symbol);
-    var oRef = fee > 0 ? userRef(ownerUid) : null;
-    var txRef = uRef.collection("transactions").doc();
-    var oTx = oRef ? oRef.collection("transactions").doc() : null;
-    var feesRef = db.collection("config").doc("fees");
-    var ref = makeRef();
-
-    await db.runTransaction(async function (tx) {
-      var uSnap = await tx.get(uRef);
-      var sSnap = await tx.get(sRef);
-      var hSnap = await tx.get(hRef);
-      var oSnap = oRef ? await tx.get(oRef) : null;
-      if (!uSnap.exists) throw new Error("Your account wasn't found.");
-      if (!sSnap.exists) throw new Error("That stock isn't available right now.");
-      if (fee > 0 && !oSnap.exists) throw new Error("The fee account isn't set up yet.");
-      if (!hSnap.exists || !(hSnap.data().shares > 0)) throw new Error("You don't own any of this stock.");
-
-      var u = uSnap.data();
-      var s = sSnap.data();
-      var h = hSnap.data();
-      var sellAt = stockSellPrice(s.price);
-      var sharesSold = amount / sellAt;
-      if (sharesSold > h.shares + 0.000001) throw new Error("You don't have that many shares to sell.");
-
-      var newShares = Math.max(0, h.shares - sharesSold);
-      var costLeft = round2(h.cost * (newShares / h.shares));
-      var newPrice = Math.max(0.5, s.price * (1 - tradeImpact(amount, s.price)));
-      var hist = (s.hist || []).concat([round4(newPrice)]).slice(-STOCK_HISTORY);
-
-      tx.update(uRef, { balance: round2((u.balance || 0) + receive) });
-      if (oRef) {
-        tx.update(oRef, { balance: round2((oSnap.data().balance || 0) + fee) });
-        tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
-        tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
-      }
-      tx.set(hRef, { shares: round4(newShares), cost: costLeft });
-      tx.update(sRef, { price: round4(newPrice), hist: hist });
-      tx.set(txRef, {
-        type: "stock_sell", title: "Sold " + s.name, amount: receive, fee: fee,
-        symbol: symbol, shares: round4(sharesSold), pricePer: round4(sellAt), ref: ref, createdAt: stamp()
-      });
-    });
-    return ref;
   }
 
   window.Wallet = {
     prices: { daily: DAILY_FEE, forever: FOREVER_PRICE, color: COLOR_PRICE },
-    stockList: STOCK_SEED, stockShares: STOCK_SHARES, stockTickMs: STOCK_TICK_MS, stockBuyPrice: stockBuyPrice, stockSellPrice: stockSellPrice,
-    ensureStocks: ensureStocks, tickStocks: tickStocks, watchStocks: watchStocks, watchHoldings: watchHoldings,
-    buyStock: buyStock, sellStock: sellStock,
     ownsFinish: ownsFinish, settleCards: settleCards, payCardToday: payCardToday,
     buyColor: buyColor, setCardFinish: setCardFinish, setCardLimit: setCardLimit, setLockTo: setLockTo, setSingleUse: setSingleUse,
     renameCard: renameCard, reissueCard: reissueCard, freezeAllCards: freezeAllCards, createDispute: createDispute,
@@ -1094,6 +917,7 @@ window.SBRules = (function () {
     createCard: createCard, watchCards: watchCards, setCardFrozen: setCardFrozen, deleteCard: deleteCard, setActiveCard: setActiveCard,
     chatId: chatId, sendMessage: sendMessage, watchChats: watchChats, watchMessages: watchMessages, markRead: markRead,
     saveContact: saveContact, removeContact: removeContact, watchContacts: watchContacts,
+    watchBank: watchBank, bankTx: bankTx,
     checkPassword: checkPassword, deleteAccount: deleteAccount,
     watchOwner: watchOwner, claimOwner: claimOwner, checkFundPassword: checkFundPassword, changeFundPassword: changeFundPassword,
     friendlyError: friendlyError
