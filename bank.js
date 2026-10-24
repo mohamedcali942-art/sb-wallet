@@ -2,7 +2,10 @@
 // The bank lives on your account record, so it follows you across devices and stays in step with your balance.
 (function () {
   var DAY = 864e5, HOUR = 36e5, WEEK = 7 * DAY;
+  var MP = window.MarketPrice; // the share price formula (prices.js), so shares are valued the way the market prices them
   var GIFT = 100, SCORE_START = 100, SCORE_DAY_CAP = 60, SAVE_MIN = 50;
+  var SHARES_FEE = 0.03, SHARES_PENALTY = 0.5; // loans backed by shares: 3% fee up front, 50% penalty if late
+  var SHARES_LTV = 0.91; // usage limit: a shares loan can be up to 91% of what the shares are worth
   var LEVELS = {
     regular: { name: "Regular", weekly: 0,     min: 0,   cut: 0,     save: 0 },
     silver:  { name: "Silver",  weekly: 5000,  min: 500, cut: 0.005, save: 0.25 },
@@ -37,6 +40,7 @@
   function pct(n) { return n.toFixed(1) + "%"; }
   function pad(n) { return (n < 10 ? "0" : "") + n; }
   function round2(n) { return Math.round(n * 100) / 100; }
+  function round4(n) { return Math.round(n * 10000) / 10000; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function seeded(n) {
     var a = (n ^ 0x9E3779B9) >>> 0;
@@ -141,6 +145,23 @@
     });
     return true;
   }
+  // Takes as much of `amount` as the card and savings can cover. Returns how much was taken.
+  function collectUpTo(c, nb, amount, now) {
+    var fromCard = Math.min(c.balance, amount);
+    c.balance = round2(c.balance - fromCard);
+    var rest = round2(amount - fromCard);
+    if (rest <= 0) return amount;
+    settleAll(nb, now);
+    var got = 0;
+    nb.savings.forEach(function (a) {
+      if (rest <= 0) return;
+      var t = Math.min(a.bal, rest);
+      a.bal = round2(a.bal - t);
+      rest = round2(rest - t);
+      got = round2(got + t);
+    });
+    return round2(fromCard + got);
+  }
   // The card closes: everything in the card and savings is taken, the score drops, and rates suffer for 30 days
   function closeCard(c, nb, now, why) {
     var taken = round2(c.balance + savingsTotal(nb));
@@ -153,10 +174,48 @@
     logTo(nb, "closed", "Card closed: " + why + ". Everything was taken from your card and savings.", taken, now);
   }
 
-  // Runs on its own: takes weekly fees and overdue loans, and grows the score. Returns null if nothing changed.
-  function processAll(cur, now) {
+  // Sells just enough pledged shares to cover what is still owed on a loan, at the live price.
+  // The shares leave the holder's record and the market, and the cash goes to the debt.
+  function seizeForDebt(c, nb, env, now) {
+    var L = nb.loan;
+    var remaining = L.stillOwed;
+    Object.keys(L.collateral || {}).forEach(function (sym) {
+      var pledged = L.collateral[sym];
+      var s = env.market[sym], h = env.holdings[sym];
+      if (remaining <= 0 || !s || !s.moods || !h || !(pledged > 0)) return;
+      var want = MP.sellSharesFor(s, remaining, now);
+      var n = round4(Math.min(pledged, want === null ? pledged : want));
+      if (!(n > 0)) return;
+      var value = round2(MP.grossSellValue(s, s.held || 0, n, now) * (1 - MP.SPREAD));
+      var had = h.shares;
+      h.shares = round4(Math.max(0, h.shares - n));
+      h.pledged = round4(Math.max(0, (h.pledged || 0) - n));
+      h.cost = had > 0 ? round2((h.cost || 0) * (h.shares / had)) : 0;
+      L.collateral[sym] = round4(pledged - n);
+      if (L.collateral[sym] <= 0) delete L.collateral[sym];
+      s.held = round4(Math.max(0, (s.held || 0) - n));
+      s.heldLog = MP.trimLog((s.heldLog || []).concat([{ t: now, held: s.held }]));
+      s.lastTrade = now;
+      remaining = round2(remaining - value);
+      logTo(nb, "default", "Sold " + n + " " + sym + " shares to cover your loan. " + money(value) + " went to the debt.", value, now);
+    });
+    if (remaining <= 0) {
+      if (remaining < 0) c.balance = round2(c.balance - remaining); // any extra goes back to the card
+      nb.loan = null;
+      logTo(nb, "default", "Loan covered by selling your pledged shares.", 0, now);
+    } else if (Object.keys(L.collateral || {}).length === 0) {
+      nb.loan = null;
+      closeCard(c, nb, now, "shares sold and the loan still not covered");
+    } else {
+      L.stillOwed = remaining;
+    }
+  }
+
+  // Runs on its own: takes weekly fees, overdue loans and share sales, and grows the score.
+  // env (optional) holds the holdings and market records for shares. Returns null if nothing changed.
+  function processAll(cur, now, env) {
     if (!cur.bank || !cur.bank.issued) return null;
-    var before = JSON.stringify([cur.bank, cur.balance]);
+    var before = JSON.stringify([cur.bank, cur.balance, env ? env.holdings : null, env ? env.market : null]);
     var nb = clone(cur.bank);
     var c = { balance: cur.balance };
 
@@ -170,15 +229,29 @@
       nb.savingsDay = dayKeyOf(now);
     }
 
-    // Overdue loan: take what's owed plus the penalty. If it can't be covered, the card closes.
-    if (nb.loan && now >= nb.loan.dueAt) {
+    // Overdue loan: the card pays what it can. A loan backed by shares keeps the rest as "still owed";
+    // any other loan closes the card if it isn't covered.
+    if (nb.loan && !nb.loan.inDefault && now >= nb.loan.dueAt) {
       var L = nb.loan;
       var due = round2(owedAt(L, L.dueAt) + L.amount * L.penaltyPct);
-      nb.loan = null;
       takeScore(nb, 60);
-      if (collect(c, nb, due, now)) logTo(nb, "default", "Loan overdue. " + money(due) + " was taken to cover it.", due, now);
-      else closeCard(c, nb, now, "loan overdue and not covered");
+      var got = collectUpTo(c, nb, due, now);
+      var rest = round2(due - got);
+      if (rest <= 0) {
+        nb.loan = null;
+        logTo(nb, "default", "Loan overdue. " + money(due) + " was taken to cover it.", due, now);
+      } else if (L.collateral && Object.keys(L.collateral).length) {
+        L.inDefault = true;
+        L.stillOwed = rest;
+        logTo(nb, "default", "Loan overdue. " + money(got) + " was taken. " + money(rest) + " is still owed, so pledged shares will be sold to cover it.", got, now);
+      } else {
+        nb.loan = null;
+        closeCard(c, nb, now, "loan overdue and not covered");
+      }
     }
+
+    // Debt still owed on a shares loan: sell only what is needed, at the live price
+    if (nb.loan && nb.loan.inDefault && env) seizeForDebt(c, nb, env, now);
 
     // Weekly card fees, catching up on any missed weeks
     while (nb.level && nb.level !== "regular" && now >= nb.weekFeeAt) {
@@ -192,19 +265,20 @@
       }
     }
 
-    var after = JSON.stringify([nb, c.balance]);
+    var after = JSON.stringify([nb, c.balance, env ? env.holdings : null, env ? env.market : null]);
     if (after === before) return null;
     return { balance: round2(c.balance), bank: nb };
   }
 
-  // Every action goes through here: bring the record up to date, then apply the change
+  // Every action goes through here: bring the record up to date, then apply the change.
+  // fn(c, nb, now, env) changes the card (c), the bank record (nb) and the share records in env.
   function mutateWith(fn) {
-    return function (cur) {
+    return function (cur, env) {
       var now = Date.now();
-      var base = processAll(cur, now) || cur;
+      var base = processAll(cur, now, env) || cur;
       var c = { balance: base.balance };
       var nb = clone(base.bank || blank());
-      fn(c, nb, now);
+      fn(c, nb, now, env);
       return { balance: round2(c.balance), bank: nb };
     };
   }
@@ -269,18 +343,54 @@
       logTo(nb, "loan", "Borrowed " + money(a) + " for " + T.label + ".", a, now);
     });
   }
+  // Borrow above your limit by pledging shares. The shares must be worth 150% of the loan or more.
+  function borrowSharesAction(sym, shares, a, termKey) {
+    return mutateWith(function (c, nb, now, env) {
+      if (!nb.issued || !nb.level) throw new Error("Your card is closed. Get a normal card first.");
+      if (nb.loan) throw new Error("You already have a loan open.");
+      var wait = nb.lastBorrowAt + 12 * HOUR - now;
+      if (wait > 0) throw new Error("You can borrow again in " + dur(wait) + ".");
+      var lim = bandLimit(nb.score);
+      if (!(a > lim)) throw new Error("Shares back loans above your limit of " + money(lim) + ".");
+      var s = env.market[sym], h = env.holdings[sym];
+      if (!s || !s.moods || !h) throw new Error("You don't hold any of that stock.");
+      if (!(shares > 0) || shares > round4(h.shares - (h.pledged || 0)) + 0.000001) throw new Error("You don't have that many free shares.");
+      var value = round2(MP.grossSellValue(s, s.held || 0, shares, now) * (1 - MP.SPREAD));
+      if (a > value * SHARES_LTV) throw new Error("Those shares are worth " + money(value) + ". You can borrow up to 91% of that, so the most is " + money(Math.floor(value * SHARES_LTV * 100) / 100) + ".");
+      var T = TERMS[termKey];
+      var col = {};
+      col[sym] = round4(shares);
+      nb.loan = { amount: a, feePct: SHARES_FEE, hourly: T.hourly, termKey: termKey,
+                  startedAt: now, dueAt: now + T.days * DAY, penaltyPct: SHARES_PENALTY, collateral: col };
+      h.pledged = round4((h.pledged || 0) + shares);
+      c.balance = round2(c.balance + a);
+      nb.lastBorrowAt = now;
+      logTo(nb, "loan", "Borrowed " + money(a) + " against " + round4(shares) + " " + sym + " shares for " + T.label + ".", a, now);
+    });
+  }
+  // Unlocks the pledged shares when a loan is paid off
+  function releaseCollateral(L, env) {
+    Object.keys(L.collateral || {}).forEach(function (sym) {
+      var h = env.holdings[sym];
+      if (h) h.pledged = round4(Math.max(0, (h.pledged || 0) - L.collateral[sym]));
+    });
+    L.collateral = {};
+  }
   function repayAction() {
-    return mutateWith(function (c, nb, now) {
+    return mutateWith(function (c, nb, now, env) {
       var L = nb.loan;
       if (!L) throw new Error("No loan is open.");
-      var owed = round2(owedAt(L, now));
+      var owed = round2(L.inDefault ? L.stillOwed : owedAt(L, now));
       if (c.balance < owed) throw new Error("Your card needs " + money(owed) + " to pay this off. Move money in from savings first.");
       c.balance = round2(c.balance - owed);
       var held = now - L.startedAt;
-      if (held >= 7 * DAY) addScore(nb, 40, now);
-      else if (held >= 12 * HOUR) addScore(nb, 25, now);
+      if (!L.inDefault) {
+        if (held >= 7 * DAY) addScore(nb, 40, now);
+        else if (held >= 12 * HOUR) addScore(nb, 25, now);
+      }
+      releaseCollateral(L, env);
       nb.loan = null;
-      logTo(nb, "paid", held >= 12 * HOUR ? "Loan paid back. Good repayment." : "Loan paid back early. No score change.", owed, now);
+      logTo(nb, "paid", held >= 12 * HOUR || L.inDefault ? "Loan paid back." : "Loan paid back early. No score change.", owed, now);
     });
   }
   function openSavingsAction(name) {
@@ -364,19 +474,20 @@
 
   // ---------- Live state ----------
   var uid = null, unsub = null, live = null, lastJson = "", flash = "";
+  var holdingsLive = null, marketLive = null, hUnsub = null, mUnsub = null;
   function bank() { return live && live.bank ? live.bank : blank(); }
   function balance() { return live ? live.balance : 0; }
 
   function run(mut, after) {
     if (!uid || !window.Wallet) return;
-    Wallet.bankTx(uid, mut).then(function () { if (after) after(); }).catch(function (err) {
+    Wallet.bankTxWithStocks(uid, [], mut).then(function () { if (after) after(); }).catch(function (err) {
       flash = err && err.message ? err.message : "Something went wrong. Try again.";
       render();
     });
   }
   function maintain() {
     if (!uid || !window.Wallet) return;
-    Wallet.bankTx(uid, function (cur) { return processAll(cur, Date.now()); }).catch(function () { /* try again next time */ });
+    Wallet.bankTxWithStocks(uid, [], function (cur, env) { return processAll(cur, Date.now(), env); }).catch(function () { /* try again next time */ });
   }
   function link() {
     var u = window.SB && SB.uid ? SB.uid() : null;
@@ -388,6 +499,10 @@
       var j = JSON.stringify(d);
       if (j !== lastJson) { lastJson = j; render(); }
     });
+    if (hUnsub) hUnsub();
+    hUnsub = Wallet.watchHoldingsAll(uid, function (m) { holdingsLive = m; });
+    if (mUnsub) mUnsub();
+    mUnsub = Wallet.watchMarketAll(function (m) { marketLive = m; });
     maintain();
   }
   setInterval(link, 1000);
@@ -421,6 +536,12 @@
 
   function noticeBlock(b, now) {
     var box = h("div");
+    if (b.loan) {
+      var lk = h("div", "bank-notice");
+      lk.appendChild(h("b", "", "Card locked"));
+      lk.appendChild(h("span", "", "You owe a loan, so you can't send, buy stocks or make payments until it's paid. Sell shares or move savings to your card, then pay it off."));
+      box.appendChild(lk);
+    }
     if (b.issued && !b.level) {
       var c = h("div", "bank-notice");
       c.appendChild(h("b", "", "Your card is closed"));
@@ -573,7 +694,7 @@
       l.appendChild(h("p", "bank-big", money(L.amount)));
       var owed = h("p", "bank-line");
       owed.appendChild(document.createTextNode("Owed now "));
-      var ow = h("b", "", money(owedAt(L, now)));
+      var ow = h("b", "", money(L.inDefault ? L.stillOwed : owedAt(L, now)));
       ow.id = "bankOwed";
       owed.appendChild(ow);
       l.appendChild(owed);
@@ -583,6 +704,13 @@
       lf.id = "bankLeft";
       left.appendChild(lf);
       l.appendChild(left);
+      var symbolsHeld = Object.keys(L.collateral || {});
+      if (symbolsHeld.length) {
+        l.appendChild(h("p", "muted small", "Secured by " + symbolsHeld.map(function (k) { return round4(L.collateral[k]) + " " + k + " shares"; }).join(", ") + ". They stay locked until this is paid back."));
+      }
+      if (L.inDefault) {
+        l.appendChild(h("p", "bank-flash", "Still owed " + money(L.stillOwed) + ". Your pledged shares are being sold to cover it."));
+      }
       l.appendChild(h("p", "muted small", "You can pay any time. Repaying within 12 hours adds nothing to your score."));
       var pay = h("button", "primary wide", "Pay back now");
       pay.type = "button";
@@ -597,6 +725,16 @@
       btn.disabled = wait > 0 || !b.level;
       btn.addEventListener("click", openBorrow);
       s.appendChild(btn);
+      var sub = h("div", "bank-sub");
+      sub.style.marginTop = "14px";
+      sub.appendChild(h("p", "bank-kick", "Against your shares"));
+      sub.appendChild(h("p", "muted small", "Borrow above your limit by pledging shares. Usage limit: 91% of what the shares are worth. The shares stay locked until you pay back."));
+      var sbtn = h("button", "wide", "Borrow against shares");
+      sbtn.type = "button";
+      sbtn.disabled = wait > 0 || !b.level;
+      sbtn.addEventListener("click", openCollateral);
+      sub.appendChild(sbtn);
+      s.appendChild(sub);
     }
     var more = h("details", "bank-rules");
     more.appendChild(h("summary", "", "How your score works"));
@@ -711,9 +849,9 @@
     if (e) e.textContent = msg;
   }
   // Runs a change from a page: close on success, show the message on failure
-  function runFromPage(mut) {
+  function runFromPage(mut, shareSymbols) {
     if (!uid || !window.Wallet) return;
-    Wallet.bankTx(uid, mut).then(closePage).catch(function (err) {
+    Wallet.bankTxWithStocks(uid, shareSymbols || [], mut).then(closePage).catch(function (err) {
       showPageError(err && err.message ? err.message : "Something went wrong. Try again.");
     });
   }
@@ -891,6 +1029,118 @@
       cb.addEventListener("change", update);
       go.addEventListener("click", function () {
         runFromPage(borrowAction(Number(amt.input.value) || 0, termKey));
+      });
+      update();
+    });
+  }
+
+  // Borrow above your limit by pledging shares as collateral
+  function openCollateral() {
+    var b = bank();
+    if (!b.issued || b.loan || !b.level) return;
+    var limit = bandLimit(b.score);
+    openPage("Borrow against shares", function (body) {
+      var doc = h("div", "bank-doc");
+      body.appendChild(doc);
+      doc.appendChild(h("p", "muted small", "Pledge shares to borrow above your limit of " + money(limit) + ". You can borrow up to 91% of what your shares are worth. They stay locked until you pay it back."));
+      var owned = Object.keys(holdingsLive || {}).filter(function (k) {
+        var x = holdingsLive[k];
+        return marketLive && marketLive[k] && x.shares - (x.pledged || 0) > 0.000001;
+      });
+      if (!owned.length) {
+        doc.appendChild(h("p", "muted small", "You don't have any free shares to pledge. Buy some on the stocks page first."));
+        return;
+      }
+      var sym = owned[0];
+      doc.appendChild(h("p", "bank-flabel", "Which shares?"));
+      var symRow = h("div", "bank-chips");
+      var symBtns = {};
+      owned.forEach(function (k) {
+        var sb = h("button", "chip", marketLive[k].name || k);
+        sb.type = "button";
+        symBtns[k] = sb;
+        sb.addEventListener("click", function () {
+          sym = k;
+          Object.keys(symBtns).forEach(function (x) { symBtns[x].classList.toggle("on", x === k); });
+          update();
+        });
+        symRow.appendChild(sb);
+      });
+      symBtns[sym].classList.add("on");
+      doc.appendChild(symRow);
+
+      var shares = field("Shares to pledge");
+      shares.input.type = "number";
+      shares.input.min = "0";
+      shares.input.inputMode = "decimal";
+      doc.appendChild(shares.wrap);
+      var amt = field("Amount to borrow");
+      amt.input.type = "number";
+      amt.input.min = "1";
+      amt.input.inputMode = "decimal";
+      amt.input.value = String(limit + 100);
+      doc.appendChild(amt.wrap);
+
+      doc.appendChild(h("p", "bank-flabel", "How long?"));
+      var termKey = "standard";
+      var termRow = h("div", "bank-chips");
+      var termBtns = {};
+      Object.keys(TERMS).forEach(function (k) {
+        var tb = h("button", "chip", TERMS[k].label);
+        tb.type = "button";
+        termBtns[k] = tb;
+        tb.addEventListener("click", function () {
+          termKey = k;
+          Object.keys(termBtns).forEach(function (x) { termBtns[x].classList.toggle("on", x === k); });
+          update();
+        });
+        termRow.appendChild(tb);
+      });
+      termBtns.standard.classList.add("on");
+      doc.appendChild(termRow);
+
+      var sum = h("div", "bank-sum");
+      doc.appendChild(sum);
+      var agree = h("label", "bank-check");
+      var cb = h("input");
+      cb.type = "checkbox";
+      agree.appendChild(cb);
+      agree.appendChild(h("span", "", "I agree that my shares stay locked, and that they can be sold to cover this loan if it isn't paid on time."));
+      doc.appendChild(agree);
+      var go = h("button", "primary wide", "Confirm loan");
+      go.type = "button";
+      doc.appendChild(go);
+      body.appendChild(pageError(body));
+
+      function update() {
+        var m = marketLive[sym], x = holdingsLive[sym];
+        var free = x ? round4(x.shares - (x.pledged || 0)) : 0;
+        var n = Number(shares.input.value) || 0, a = Number(amt.input.value) || 0, now = Date.now();
+        var T = TERMS[termKey];
+        var worth = n > 0 && n <= free + 0.000001 ? round2(MP.grossSellValue(m, m.held || 0, n, now) * (1 - MP.SPREAD)) : 0;
+        var most = Math.floor(worth * SHARES_LTV * 100) / 100;
+        sum.innerHTML = "";
+        sum.appendChild(row("You have free", free + " shares"));
+        sum.appendChild(row("Those shares are worth", worth > 0 ? money(worth) : "-"));
+        sum.appendChild(row("Most you can borrow", money(most)));
+        if (a > 0 && worth > 0) {
+          sum.appendChild(row("You receive", money(a)));
+          sum.appendChild(row("Fee (" + (SHARES_FEE * 100).toFixed(0) + "%)", money(a * SHARES_FEE)));
+          sum.appendChild(row("Owed if kept to the end", money(a * (1 + SHARES_FEE) + a * T.hourly * T.days * 24)));
+          sum.appendChild(row("Penalty if late", money(a * SHARES_PENALTY) + " (" + Math.round(SHARES_PENALTY * 100) + "%)"));
+        }
+        var msg = "";
+        if (n > free + 0.000001) msg = "You only have " + free + " free shares of this stock.";
+        else if (!(a > limit)) msg = "Borrow more than " + money(limit) + " to use shares. Smaller loans use the normal borrow.";
+        else if (worth > 0 && a > most) msg = "Your shares can back up to 91% of their value.";
+        if (msg) sum.appendChild(h("p", "muted small", msg));
+        go.disabled = !(worth > 0 && a > limit && a <= most && cb.checked);
+      }
+      shares.input.addEventListener("input", update);
+      amt.input.addEventListener("input", update);
+      cb.addEventListener("change", update);
+      go.addEventListener("click", function () {
+        runFromPage(borrowSharesAction(sym, Number(shares.input.value) || 0, Number(amt.input.value) || 0, termKey), [sym]);
       });
       update();
     });

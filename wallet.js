@@ -321,6 +321,7 @@ window.SBRules = (function () {
       if (fee > 0 && !snaps[ownerUid].exists) throw new Error("fee-owner-missing");
 
       var s = snaps[senderUid].data();
+      if (s.bank && s.bank.loan) throw new Error("debt-locked");
       var r = snaps[recipientUid].data();
       if ((s.balance || 0) < total) throw new Error("insufficient");
 
@@ -848,6 +849,7 @@ window.SBRules = (function () {
       "owner-exists": "Someone already set up the owner password.",
       "bad-fund-password": "That funding password isn't right.",
       "no-crypto": "This browser can't do secure passwords. Use Safari.",
+      "debt-locked": "Your card is locked while you owe a loan. Pay it off first.",
       "card-locked": "This card is locked. Pay its fee or unfreeze it first.",
       "card-lockto": "This card can only pay one specific person.",
       "card-frozen": "This card is frozen. Unfreeze it first.",
@@ -901,6 +903,52 @@ window.SBRules = (function () {
     });
   }
 
+  // Like bankTx, but the change can also lock or sell shares. The holdings and market records for the
+  // given symbols (and any symbols a loan is secured by) are read first, and written back only if changed.
+  // mutate(cur, env) changes env.holdings[sym] and env.market[sym] in place.
+  function bankTxWithStocks(uid, extraSymbols, mutate) {
+    var ref = db.collection("users").doc(uid);
+    return db.runTransaction(async function (tx) {
+      var snap = await tx.get(ref);
+      if (!snap.exists) throw new Error("Your account wasn't found. Log in again.");
+      var d = snap.data();
+      var cur = { balance: d.balance || 0, bank: d.bank || null };
+      var want = {};
+      (extraSymbols || []).forEach(function (k) { want[k] = true; });
+      var secured = cur.bank && cur.bank.loan && cur.bank.loan.collateral ? cur.bank.loan.collateral : {};
+      Object.keys(secured).forEach(function (k) { want[k] = true; });
+      var syms = Object.keys(want);
+      var env = { holdings: {}, market: {} };
+      var hRef = {}, mRef = {}, origH = {}, origM = {};
+      for (var i = 0; i < syms.length; i++) {
+        var sym = syms[i];
+        hRef[sym] = ref.collection("holdings").doc(sym);
+        mRef[sym] = db.collection("market").doc(sym);
+        var hs = await tx.get(hRef[sym]);
+        var ms = await tx.get(mRef[sym]);
+        env.holdings[sym] = hs.exists && hs.data().v === 2 ? Object.assign({}, hs.data()) : null;
+        env.market[sym] = ms.exists ? Object.assign({ id: sym }, ms.data()) : null;
+        origH[sym] = JSON.stringify(env.holdings[sym]);
+        origM[sym] = JSON.stringify(env.market[sym]);
+      }
+      var out = mutate(cur, env);
+      if (!out) return cur;
+      syms.forEach(function (sym) {
+        var h = env.holdings[sym];
+        if (JSON.stringify(h) !== origH[sym] && h) {
+          if (h.shares > 0.000001) tx.set(hRef[sym], { v: 2, shares: h.shares, cost: h.cost || 0, pledged: h.pledged || 0 });
+          else tx.delete(hRef[sym]);
+        }
+        var m = env.market[sym];
+        if (m && JSON.stringify(m) !== origM[sym]) {
+          tx.update(mRef[sym], { held: m.held, heldLog: m.heldLog, lastTrade: m.lastTrade });
+        }
+      });
+      tx.update(ref, { balance: round2(out.balance), bank: out.bank });
+      return out;
+    });
+  }
+
   window.Wallet = {
     prices: { daily: DAILY_FEE, forever: FOREVER_PRICE, color: COLOR_PRICE },
     ownsFinish: ownsFinish, settleCards: settleCards, payCardToday: payCardToday,
@@ -917,7 +965,7 @@ window.SBRules = (function () {
     createCard: createCard, watchCards: watchCards, setCardFrozen: setCardFrozen, deleteCard: deleteCard, setActiveCard: setActiveCard,
     chatId: chatId, sendMessage: sendMessage, watchChats: watchChats, watchMessages: watchMessages, markRead: markRead,
     saveContact: saveContact, removeContact: removeContact, watchContacts: watchContacts,
-    watchBank: watchBank, bankTx: bankTx,
+    watchBank: watchBank, bankTx: bankTx, bankTxWithStocks: bankTxWithStocks,
     checkPassword: checkPassword, deleteAccount: deleteAccount,
     watchOwner: watchOwner, claimOwner: claimOwner, checkFundPassword: checkFundPassword, changeFundPassword: changeFundPassword,
     friendlyError: friendlyError

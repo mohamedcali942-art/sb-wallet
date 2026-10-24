@@ -471,6 +471,23 @@ var SECTOR_OF = {
     }
   }
 
+  // For the bank: every share you hold (with what is locked as collateral)
+  function watchHoldingsAll(uid, callback) {
+    return userRef(uid).collection("holdings").onSnapshot(function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { if (d.data().v === 2) map[d.id] = d.data(); });
+      callback(map);
+    }, function (err) { console.error(err); });
+  }
+  // For the bank: every stock's market record, by symbol
+  function watchMarketAll(callback) {
+    return db.collection("market").onSnapshot(function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { map[d.id] = Object.assign({ id: d.id }, d.data()); });
+      callback(map);
+    }, function (err) { console.error(err); });
+  }
+
   // Buy: you pay `amount` (the fee is on top). Your shares follow the price curve.
   async function buyStock(uid, symbol, amount, fee, ownerUid) {
     amount = round2(amount);
@@ -495,6 +512,7 @@ var SECTOR_OF = {
       if (!sSnap.exists || !sSnap.data().moods) throw new Error("That stock isn't available right now.");
       if (fee > 0 && !oSnap.exists) throw new Error("The fee account isn't set up yet.");
       var u = uSnap.data();
+      if (u.bank && u.bank.loan) throw new Error("Your card is locked while you owe a loan. Pay it off first.");
       if ((u.balance || 0) < total) throw new Error("You don't have enough money for that.");
 
       var now = Date.now();
@@ -512,7 +530,7 @@ var SECTOR_OF = {
         tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
         tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
       }
-      tx.set(hRef, { v: 2, shares: round4((h.shares || 0) + shares), cost: round2((h.cost || 0) + total) });
+      tx.set(hRef, { v: 2, shares: round4((h.shares || 0) + shares), cost: round2((h.cost || 0) + total), pledged: round4(h.pledged || 0) });
       tx.update(sRef, { held: round4(newHeld), heldLog: log, lastTrade: now });
       tx.set(txRef, {
         type: "stock_buy", title: "Bought " + s.name, amount: -total, fee: fee,
@@ -545,15 +563,16 @@ var SECTOR_OF = {
       if (!uSnap.exists) throw new Error("Your account wasn't found.");
       if (!sSnap.exists || !sSnap.data().moods) throw new Error("That stock isn't available right now.");
       if (fee > 0 && !oSnap.exists) throw new Error("The fee account isn't set up yet.");
-      if (!hSnap.exists || hSnap.data().v !== 2 || !(hSnap.data().shares > 0)) throw new Error("You don't own any of this stock.");
+      if (!hSnap.exists || hSnap.data().v !== 2 || !(hSnap.data().shares - (hSnap.data().pledged || 0) > 0)) throw new Error("You don't own any free shares of this stock.");
 
       var u = uSnap.data();
       var now = Date.now();
       var s = Object.assign({ id: symbol }, sSnap.data());
       var h = hSnap.data();
       var n = sellSharesFor(s, amount, now);
-      if (n === null || n > h.shares + 0.000001) throw new Error("You don't have that many shares to sell.");
-      n = Math.min(n, h.shares);
+      var free = Math.max(0, h.shares - (h.pledged || 0));
+      if (n === null || n > free + 0.000001) throw new Error("You don't have that many free shares to sell. Some are locked as collateral.");
+      n = Math.min(n, free);
       var newHeld = Math.max(0, (s.held || 0) - n);
       var newShares = Math.max(0, h.shares - n);
       var costLeft = round2(h.cost * (newShares / h.shares));
@@ -565,7 +584,7 @@ var SECTOR_OF = {
         tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
         tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
       }
-      tx.set(hRef, { v: 2, shares: round4(newShares), cost: costLeft });
+      tx.set(hRef, { v: 2, shares: round4(newShares), cost: costLeft, pledged: round4(h.pledged || 0) });
       tx.update(sRef, { held: round4(newHeld), heldLog: log, lastTrade: now });
       tx.set(txRef, {
         type: "stock_sell", title: "Sold " + s.name, amount: receive, fee: fee,
@@ -595,13 +614,13 @@ var SECTOR_OF = {
       var oSnap = oRef ? await tx.get(oRef) : null;
       if (!uSnap.exists) throw new Error("Your account wasn't found.");
       if (!sSnap.exists || !sSnap.data().moods) throw new Error("That stock isn't available right now.");
-      if (!hSnap.exists || hSnap.data().v !== 2 || !(hSnap.data().shares > 0)) throw new Error("You don't own any of this stock.");
+      if (!hSnap.exists || hSnap.data().v !== 2 || !(hSnap.data().shares - (hSnap.data().pledged || 0) > 0)) throw new Error("You don't own any free shares of this stock.");
 
       var u = uSnap.data();
       var now = Date.now();
       var s = Object.assign({ id: symbol }, sSnap.data());
       var h = hSnap.data();
-      var n = Math.min(wantShares, h.shares);
+      var n = Math.min(wantShares, Math.max(0, h.shares - (h.pledged || 0)));
       if (!(n > 0)) throw new Error("Enter how many shares to sell.");
       var value = round2(grossSellValue(s, s.held || 0, n, now) * (1 - SPREAD));
       var fee = feeOn && feeFn ? round2(feeFn(value)) : 0;
@@ -618,7 +637,7 @@ var SECTOR_OF = {
         tx.set(feesRef, { total: FV.increment(fee) }, { merge: true });
         tx.set(oTx, { type: "fee", title: "Stock fee from " + fullName(u), amount: fee, ref: ref, createdAt: stamp() });
       }
-      tx.set(hRef, { v: 2, shares: round4(newShares), cost: costLeft });
+      tx.set(hRef, { v: 2, shares: round4(newShares), cost: costLeft, pledged: round4(h.pledged || 0) });
       tx.update(sRef, { held: round4(newHeld), heldLog: log, lastTrade: now });
       tx.set(txRef, {
         type: "stock_sell", title: "Sold " + s.name, amount: receive, fee: fee,
@@ -629,6 +648,8 @@ var SECTOR_OF = {
   }
 
   Object.assign(window.Wallet, {
+    watchHoldingsAll: function (uid, cb) { return watchHoldingsAll(uid, cb); },
+    watchMarketAll: function (cb) { return watchMarketAll(cb); },
     stockList: SEED,
     stockShares: TOTAL,
     stockTickMs: 250,
